@@ -403,6 +403,7 @@ export default function DailyScheduler({
   });
   const [currentTimeBlock, setCurrentTimeBlock] = useState<TimeBlock>(() => getCurrentTimeBlock());
   const [visibleBlock, setVisibleBlock] = useState<TimeBlock>(() => getCurrentTimeBlock());
+  const [blockSortOrder, setBlockSortOrder] = useState<'liveFirst' | 'chronological'>('liveFirst');
   const [manualBlockNavigation, setManualBlockNavigation] = useState(false);
 
   const [expandedTaskIds, setExpandedTaskIds] = useState<Record<string, boolean>>({
@@ -415,6 +416,8 @@ export default function DailyScheduler({
   const [localLoggedFoods, setLocalLoggedFoods] = useState<DailySchedulerProps['loggedFoods']>(readStoredLoggedFoods);
   const [editingProteinGoal, setEditingProteinGoal] = useState<{ block: TimeBlock; value: string } | null>(null);
   const [editingTotalProteinGoal, setEditingTotalProteinGoal] = useState<string | null>(null);
+  const [showInlineProteinLog, setShowInlineProteinLog] = useState(false);
+  const [inlineProteinEntry, setInlineProteinEntry] = useState({ name: '', protein: '', mealType: 'Morning' as 'Morning' | 'Afternoon' | 'Evening' | 'Night' });
   const [sleepLogs, setSleepLogs] = useState<Record<string, { hours: number; quality: number; goal: number }>>(() => {
     try {
       const saved = localStorage.getItem('focus_now_scheduler_sleep_logs_v1');
@@ -903,7 +906,18 @@ export default function DailyScheduler({
 
   const datesStrip      = generateDateStrip(selectedDate);
   const timeBlocks: TimeBlock[] = ['Morning', 'Afternoon', 'Evening', 'Night'];
-  const visibleTimeBlocks: TimeBlock[] = [visibleBlock];
+  const visibleTimeBlocks = useMemo(() => {
+    if (selectedDate === dateToday && blockSortOrder === 'liveFirst') {
+      const current = getCurrentTimeBlock();
+      const currentIndex = timeBlocks.indexOf(current);
+      return [
+        ...timeBlocks.slice(currentIndex),
+        ...timeBlocks.slice(0, currentIndex)
+      ];
+    }
+    return timeBlocks;
+  }, [selectedDate, currentTimeBlock, blockSortOrder]);
+
   const visibleBlockIndex = timeBlocks.indexOf(visibleBlock);
   const nextVisibleBlock = getNextTimeBlock(visibleBlock);
 
@@ -929,8 +943,13 @@ export default function DailyScheduler({
     setVisibleBlock(block);
     setExpandedBlocks(prev => ({ ...prev, [block]: true }));
     window.setTimeout(() => {
-      timeBlockViewportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 0);
+      const el = document.getElementById(`time-block-${block}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else {
+        timeBlockViewportRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 50);
   };
 
   const handleShowNextBlock = () => handleShowBlock(getNextTimeBlock(visibleBlock));
@@ -972,6 +991,31 @@ export default function DailyScheduler({
     onUpdateNutritionTargets?.(nextTargets);
     showToast(`Daily protein goal → ${nextGoal}g`);
     setEditingTotalProteinGoal(null);
+  };
+
+  const handleSaveInlineProteinLog = () => {
+    const protein = Number.parseFloat(inlineProteinEntry.protein);
+    if (!Number.isFinite(protein) || protein <= 0) {
+      showToast('Enter a valid protein amount');
+      return;
+    }
+    const name = inlineProteinEntry.name.trim() || 'Quick Log';
+    const newEntry = {
+      id: 'plog_' + Math.random().toString(36).substring(2, 9),
+      name,
+      protein: Math.round(protein * 10) / 10,
+      calories: 0,
+      mealType: inlineProteinEntry.mealType,
+      date: selectedDate,
+    };
+    const updated = [...(localLoggedFoods || []), newEntry];
+    setLocalLoggedFoods(updated);
+    try {
+      localStorage.setItem(APP_LOGGED_FOODS_KEY, JSON.stringify(updated));
+    } catch {}
+    setInlineProteinEntry({ name: '', protein: '', mealType: getCurrentTimeBlock() as 'Morning' | 'Afternoon' | 'Evening' | 'Night' });
+    setShowInlineProteinLog(false);
+    showToast(`Logged ${protein}g protein to ${inlineProteinEntry.mealType}`);
   };
 
   const handleSaveSleepLog = () => {
@@ -2388,44 +2432,83 @@ export default function DailyScheduler({
         </div>
 
         <div className="mt-3 pt-3 border-t border-neutral-100">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-[10px] font-black uppercase tracking-wider text-neutral-400">Viewing Block</span>
-                {selectedDate === dateToday && visibleBlock === currentTimeBlock && (
-                  <span className="text-[10px] font-black uppercase tracking-wider bg-black text-white px-2 py-0.5 rounded-full">Live Now</span>
-                )}
-                {selectedDate === dateToday && visibleBlock !== currentTimeBlock && (
-                  <span className="text-[10px] font-black uppercase tracking-wider bg-neutral-100 text-neutral-600 border border-neutral-200 px-2 py-0.5 rounded-full">Peek Ahead</span>
+          <div className="flex flex-col gap-3">
+            {/* Header controls for timeline layout */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-neutral-400">Daily Timeline</span>
+                {selectedDate === dateToday && (
+                  <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white px-2.5 py-0.5 rounded-full animate-pulse shadow-2xs">
+                    <span className="w-1 h-1 rounded-full bg-white" />
+                    Live: {currentTimeBlock}
+                  </span>
                 )}
               </div>
-              <div className="mt-1 flex items-center gap-2 min-w-0">
-                <span className="text-lg font-black text-black truncate">{visibleBlock}</span>
-                <span className="text-xs font-bold text-neutral-400">{visibleBlockIndex + 1}/4</span>
-                <span className="text-xs font-semibold text-neutral-500 truncate">{TIME_BLOCK_META[visibleBlock].timeRange}</span>
-              </div>
+
+              {selectedDate === dateToday && (
+                <div className="flex items-center gap-1 bg-neutral-100 p-0.5 rounded-xl border border-neutral-200">
+                  <button
+                    type="button"
+                    onClick={() => setBlockSortOrder('liveFirst')}
+                    className={`px-3 py-1.2 rounded-lg text-[10px] font-black tracking-tight transition-all cursor-pointer ${
+                      blockSortOrder === 'liveFirst'
+                        ? 'bg-white text-black shadow-2xs font-extrabold'
+                        : 'text-neutral-400 hover:text-neutral-600'
+                    }`}
+                    title="Bring the current live block to the top of the timeline"
+                  >
+                    ⚡ Live First
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBlockSortOrder('chronological')}
+                    className={`px-3 py-1.2 rounded-lg text-[10px] font-black tracking-tight transition-all cursor-pointer ${
+                      blockSortOrder === 'chronological'
+                        ? 'bg-white text-black shadow-2xs font-extrabold'
+                        : 'text-neutral-400 hover:text-neutral-600'
+                    }`}
+                    title="Order blocks in chronological order from Morning to Night"
+                  >
+                    🕒 Chronological
+                  </button>
+                </div>
+              )}
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={handleShowCurrentTimeBlock}
-                disabled={selectedDate === dateToday && visibleBlock === currentTimeBlock}
-                title="Jump to the current time block"
-                className="h-9 px-3 rounded-xl border border-neutral-300 bg-white text-black hover:border-black disabled:opacity-40 disabled:hover:border-neutral-300 text-xs font-black flex items-center gap-1.5 transition cursor-pointer disabled:cursor-default"
-              >
-                <Clock className="w-3.5 h-3.5" />
-                <span>Now</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleShowNextBlock}
-                title={`Show ${nextVisibleBlock}`}
-                className="h-9 px-3 rounded-xl bg-black text-white hover:bg-neutral-800 text-xs font-black flex items-center gap-1.5 transition active:scale-95 cursor-pointer"
-              >
-                <ChevronDown className="w-4 h-4 stroke-[3]" />
-                <span>{nextVisibleBlock}</span>
-              </button>
+            {/* Quick Scroll Jumps */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {timeBlocks.map((block) => {
+                const meta = TIME_BLOCK_META[block];
+                const BlockIcon = meta.icon;
+                const isLive = selectedDate === dateToday && block === currentTimeBlock;
+                
+                return (
+                  <button
+                    key={block}
+                    type="button"
+                    onClick={() => handleShowBlock(block)}
+                    className={`p-3 rounded-xl border text-left transition-all hover:scale-[1.02] active:scale-95 cursor-pointer flex flex-col justify-between h-[68px] ${
+                      isLive
+                        ? 'border-black bg-neutral-50/50 shadow-2xs ring-1 ring-black/5'
+                        : 'border-neutral-200 bg-white hover:border-neutral-300 hover:shadow-2xs'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <BlockIcon className={`w-3.5 h-3.5 ${isLive ? 'text-black font-black' : 'text-neutral-400'}`} />
+                        <span className="text-[11px] font-black text-black truncate">${meta.label}</span>
+                      </div>
+                      {isLive && (
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[9px] font-bold text-neutral-400 truncate">${meta.timeRange}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -2447,68 +2530,207 @@ export default function DailyScheduler({
               </div>
             </div>
 
-            {/* Protein Progress — shows every day */}
-            <div className="flex items-center gap-3 min-h-[24px]">
-              <div className="flex items-center gap-1.5 text-[11px] font-black text-black shrink-0 w-28">
-                <span className="text-xs">🥩</span>
-                <span>Protein Intake</span>
-              </div>
-              <div className="flex-1 bg-neutral-100 rounded-full h-2 overflow-hidden border border-neutral-200">
-                <div
-                  className="bg-emerald-500 h-full transition-all duration-500 rounded-full"
-                  style={{ width: `${proteinCompletionPercentage}%` }}
-                />
-              </div>
-              {editingTotalProteinGoal !== null ? (
-                <form
-                  onSubmit={e => { e.preventDefault(); handleSaveTotalProteinGoal(); }}
-                  className="flex items-center gap-1 shrink-0 select-text"
-                  onClick={e => e.stopPropagation()}
-                >
-                  <input
-                    type="number"
-                    min="1"
-                    value={editingTotalProteinGoal}
-                    onChange={e => setEditingTotalProteinGoal(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Escape') setEditingTotalProteinGoal(null); }}
-                    className="w-12 h-6 rounded-md border border-black bg-white px-1 text-[10px] font-black text-black text-center focus:outline-none"
-                    autoFocus
-                  />
-                  <button
-                    type="submit"
-                    className="w-6 h-6 rounded-md bg-black text-white flex items-center justify-center hover:bg-neutral-800 cursor-pointer transition active:scale-95"
-                    title="Save"
-                  >
-                    <Check className="w-3 h-3 stroke-[3]" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditingTotalProteinGoal(null)}
-                    className="w-6 h-6 rounded-md border border-neutral-300 text-neutral-500 hover:text-black flex items-center justify-center cursor-pointer transition active:scale-95 bg-white"
-                    title="Cancel"
-                  >
-                    <X className="w-3 h-3 stroke-[3]" />
-                  </button>
-                </form>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setEditingTotalProteinGoal(String(totalProteinGoal))}
-                  disabled={!onUpdateNutritionTargets}
-                  title="Click to edit daily protein goal"
-                  className="text-[11px] font-black text-black w-20 text-right shrink-0 hover:text-neutral-600 flex items-center justify-end gap-1 group transition-colors cursor-pointer"
-                >
-                  <span>{totalProteinConsumed}g/{totalProteinGoal}g</span>
-                  <span className="text-[10px] text-neutral-400 group-hover:text-black opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Pencil className="w-2.5 h-2.5" />
-                  </span>
-                  <span>({proteinCompletionPercentage}%)</span>
-                </button>
-              )}
-            </div>
+            {/* ── Protein Tracker Card ─────────────────────────── */}
+            {(() => {
+              const blocks: ('Morning' | 'Afternoon' | 'Evening' | 'Night')[] = ['Morning', 'Afternoon', 'Evening', 'Night'];
+              const dateFoods = schedulerLoggedFoods.filter(f => f.date === selectedDate || (!f.date && selectedDate === dateToday));
+              const blockData = blocks.map(b => {
+                const goal = getBlockProteinGoal(b, activeNutritionTargets);
+                const consumed = dateFoods.reduce((s, f) => f.mealType === b ? s + (f.protein || 0) : s, 0);
+                const pct = goal > 0 ? Math.min(100, Math.round((consumed / goal) * 100)) : 0;
+                return { block: b, goal, consumed, pct };
+              });
+              const isGoalMet = proteinCompletionPercentage >= 100;
 
+              return (
+                <div className="rounded-2xl border border-neutral-200 bg-white overflow-hidden shadow-2xs">
+                  {/* Header row */}
+                  <div className="px-4 py-3 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="text-base leading-none">🥩</span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] font-black text-black uppercase tracking-wide">Protein</span>
+                          {isGoalMet && (
+                            <span className="text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white px-2 py-0.5 rounded-full">
+                              ✓ Goal Hit!
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-neutral-400 font-semibold mt-0.5">
+                          {totalProteinConsumed}g of {totalProteinGoal}g daily goal
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {/* Log Protein button */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowInlineProteinLog(prev => !prev);
+                          setInlineProteinEntry(prev => ({
+                            ...prev,
+                            mealType: (selectedDate === dateToday ? getCurrentTimeBlock() : 'Morning') as 'Morning' | 'Afternoon' | 'Evening' | 'Night'
+                          }));
+                        }}
+                        className={`h-7 px-2.5 rounded-xl text-[10px] font-black transition-all active:scale-95 cursor-pointer flex items-center gap-1 ${
+                          showInlineProteinLog
+                            ? 'bg-black text-white'
+                            : 'border border-neutral-300 bg-white text-black hover:border-black'
+                        }`}
+                        title="Log protein intake"
+                      >
+                        <span>{showInlineProteinLog ? '✕ Cancel' : '+ Log'}</span>
+                      </button>
+                      {/* Edit goal */}
+                      {editingTotalProteinGoal !== null ? (
+                        <form
+                          onSubmit={e => { e.preventDefault(); handleSaveTotalProteinGoal(); }}
+                          className="flex items-center gap-1"
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <input
+                            type="number"
+                            min="1"
+                            value={editingTotalProteinGoal}
+                            onChange={e => setEditingTotalProteinGoal(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Escape') setEditingTotalProteinGoal(null); }}
+                            className="w-14 h-7 rounded-lg border border-black bg-white px-2 text-[10px] font-black text-black text-center focus:outline-none"
+                            autoFocus
+                          />
+                          <button type="submit" className="w-7 h-7 rounded-lg bg-black text-white flex items-center justify-center hover:bg-neutral-800 cursor-pointer transition active:scale-95" title="Save">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                          </button>
+                          <button type="button" onClick={() => setEditingTotalProteinGoal(null)} className="w-7 h-7 rounded-lg border border-neutral-300 text-neutral-500 hover:text-black flex items-center justify-center cursor-pointer transition active:scale-95 bg-white" title="Cancel">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                          </button>
+                        </form>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setEditingTotalProteinGoal(String(totalProteinGoal))}
+                          disabled={!onUpdateNutritionTargets}
+                          title="Edit daily protein goal"
+                          className="h-7 px-2 rounded-xl border border-neutral-200 bg-white text-[10px] font-black text-black hover:border-black transition cursor-pointer disabled:opacity-40"
+                        >
+                          {proteinCompletionPercentage}%
+                        </button>
+                      )}
+                    </div>
+                  </div>
 
-            {/* Sleep & Recovery Progress */}
+                  {/* Master progress bar */}
+                  <div className="px-4 pb-3">
+                    <div className="flex h-2.5 w-full rounded-full overflow-hidden bg-neutral-100 border border-neutral-200">
+                      {blockData.map(({ block, pct, goal }) => {
+                        const share = totalProteinGoal > 0 ? (goal / totalProteinGoal) * 100 : 25;
+                        const fill = share * (pct / 100);
+                        const blockColors: Record<string, string> = {
+                          Morning: 'bg-amber-400',
+                          Afternoon: 'bg-blue-400',
+                          Evening: 'bg-violet-500',
+                          Night: 'bg-slate-600',
+                        };
+                        return (
+                          <div key={block} style={{ width: `${share}%` }} className="relative h-full overflow-hidden">
+                            <div
+                              className={`h-full transition-all duration-700 ${blockColors[block]}`}
+                              style={{ width: `${pct}%` }}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Per-block breakdown */}
+                    <div className="mt-2.5 grid grid-cols-4 gap-1.5">
+                      {blockData.map(({ block, consumed, goal, pct }) => {
+                        const blockColors: Record<string, string> = {
+                          Morning: 'text-amber-600 bg-amber-50 border-amber-200',
+                          Afternoon: 'text-blue-600 bg-blue-50 border-blue-200',
+                          Evening: 'text-violet-600 bg-violet-50 border-violet-200',
+                          Night: 'text-slate-600 bg-slate-50 border-slate-200',
+                        };
+                        const dotColors: Record<string, string> = {
+                          Morning: 'bg-amber-400',
+                          Afternoon: 'bg-blue-400',
+                          Evening: 'bg-violet-500',
+                          Night: 'bg-slate-600',
+                        };
+                        return (
+                          <div key={block} className={`rounded-xl border p-2 text-center ${blockColors[block]}`}>
+                            <div className="flex items-center justify-center gap-1 mb-0.5">
+                              <span className={`w-1.5 h-1.5 rounded-full ${dotColors[block]}`} />
+                              <span className="text-[9px] font-black uppercase tracking-wide">{block.substring(0, 3)}</span>
+                            </div>
+                            <div className="text-[10px] font-black">{consumed}g</div>
+                            <div className="text-[9px] font-bold opacity-60">/{goal}g</div>
+                            <div className="mt-1 h-1 w-full rounded-full bg-black/10 overflow-hidden">
+                              <div className={`h-full rounded-full ${dotColors[block]} transition-all duration-500`} style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Inline protein log form */}
+                  {showInlineProteinLog && (
+                    <div className="px-4 pb-4 border-t border-neutral-100 pt-3 space-y-2.5">
+                      <div className="text-[10px] font-black uppercase tracking-wider text-neutral-400">Quick Protein Log</div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <input
+                          type="text"
+                          placeholder="Food name (optional)"
+                          value={inlineProteinEntry.name}
+                          onChange={e => setInlineProteinEntry(prev => ({ ...prev, name: e.target.value }))}
+                          className="flex-1 min-w-24 h-8 rounded-xl border border-neutral-300 bg-neutral-50 px-3 text-[11px] font-semibold text-black focus:outline-none focus:border-black transition"
+                        />
+                        <input
+                          type="number"
+                          placeholder="0g"
+                          min="0"
+                          step="0.5"
+                          value={inlineProteinEntry.protein}
+                          onChange={e => setInlineProteinEntry(prev => ({ ...prev, protein: e.target.value }))}
+                          onKeyDown={e => { if (e.key === 'Enter') handleSaveInlineProteinLog(); }}
+                          className="w-20 h-8 rounded-xl border border-neutral-300 bg-neutral-50 px-3 text-[11px] font-black text-black text-center focus:outline-none focus:border-black transition"
+                          autoFocus
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 flex-1 flex-wrap">
+                          {(['Morning', 'Afternoon', 'Evening', 'Night'] as const).map(b => (
+                            <button
+                              key={b}
+                              type="button"
+                              onClick={() => setInlineProteinEntry(prev => ({ ...prev, mealType: b }))}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                                inlineProteinEntry.mealType === b
+                                  ? 'bg-black text-white'
+                                  : 'border border-neutral-200 bg-white text-neutral-600 hover:border-neutral-400'
+                              }`}
+                            >
+                              {b.substring(0, 3)}
+                            </button>
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleSaveInlineProteinLog}
+                          className="h-8 px-4 rounded-xl bg-black text-white text-[11px] font-black hover:bg-neutral-800 active:scale-95 transition cursor-pointer flex items-center gap-1.5"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+                        {/* Sleep & Recovery Progress */}
             <div className="space-y-2">
               <div className="flex items-center gap-3 min-h-[24px]">
                 <div className="flex items-center gap-1.5 text-[11px] font-black text-violet-700 shrink-0 w-28">
@@ -2699,16 +2921,17 @@ export default function DailyScheduler({
           return (
             <div
               key={block}
+              id={`time-block-${block}`}
               onDragOver={e => handleDragOverBlock(e, block)}
               onDrop={e => handleDropOnBlock(e, block)}
-              className={`bg-white border rounded-2xl overflow-hidden transition-all ${
+              className={`bg-white border rounded-2xl overflow-hidden transition-all duration-300 ${
                 isDragTarget
-                  ? 'border-black ring-2 ring-black/20 shadow-md'
+                  ? 'border-black ring-2 ring-black/20 shadow-md scale-[1.01]'
                   : isCurrent
-                  ? 'border-black ring-1 ring-black/10 shadow-2xs'
+                  ? 'border-black ring-2 ring-black/15 shadow-md shadow-emerald-500/5'
                   : isAllDone
-                  ? 'border-neutral-200 bg-neutral-50/40'
-                  : 'border-neutral-200 hover:border-neutral-300 shadow-2xs'
+                  ? 'border-neutral-200 bg-neutral-50/40 opacity-90'
+                  : 'border-neutral-200 hover:border-neutral-300 shadow-2xs hover:shadow-xs'
               }`}
             >
               {/* Section Header */}
@@ -2723,11 +2946,17 @@ export default function DailyScheduler({
                     <BlockIcon className="w-4 h-4 stroke-[2px]" />
                   </div>
                   <div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <h2 className="text-sm sm:text-base font-black tracking-tight text-black">{meta.label}</h2>
                       <span className="text-[10px] font-bold text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-full border border-neutral-200">
                         {meta.timeRange}
                       </span>
+                      {isCurrent && (
+                        <span className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-wider bg-emerald-500 text-white px-2.5 py-0.5 rounded-full shadow-2xs animate-pulse">
+                          <span className="w-1 h-1 rounded-full bg-white animate-pulse" />
+                          Live Now
+                        </span>
+                      )}
                     </div>
                     <p className="text-[11px] text-neutral-400 font-medium">{meta.desc}</p>
                   </div>

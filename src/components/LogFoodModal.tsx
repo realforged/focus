@@ -24,14 +24,7 @@ interface LogFoodModalProps {
   initialBlock?: TimeBlock;
 }
 
-const DEFAULT_FAVORITES = [
-  { id: 'fav-1', name: 'Protein Shake', protein: 30, calories: 150, emoji: '🥤' },
-  { id: 'fav-2', name: 'Eggs (3)', protein: 18, calories: 210, emoji: '🍳' },
-  { id: 'fav-3', name: 'Chicken & Rice', protein: 42, calories: 440, emoji: '🍗' },
-  { id: 'fav-4', name: 'Greek Yogurt', protein: 20, calories: 120, emoji: '🥛' },
-  { id: 'fav-5', name: 'Salmon Bowl', protein: 38, calories: 410, emoji: '🐟' },
-  { id: 'fav-6', name: 'Protein Bar', protein: 20, calories: 200, emoji: '🍫' },
-];
+const DEFAULT_FAVORITES: any[] = [];
 
 export default function LogFoodModal({
   isOpen,

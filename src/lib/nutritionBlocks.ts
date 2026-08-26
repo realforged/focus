@@ -42,11 +42,21 @@ export const getBlockProteinGoal = (block: TimeBlock, targets: NutritionTargets)
   return typeof custom === 'number' ? custom : defaults[block];
 };
 
+export const normalizeMealTypeToBlock = (mealType?: string): TimeBlock => {
+  if (!mealType) return 'Morning';
+  const m = mealType.trim().toLowerCase();
+  if (m === 'morning' || m === 'breakfast') return 'Morning';
+  if (m === 'afternoon' || m === 'lunch') return 'Afternoon';
+  if (m === 'evening' || m === 'dinner') return 'Evening';
+  if (m === 'night' || m === 'snack') return 'Night';
+  return 'Morning';
+};
+
 export const getBlockProteinConsumed = (
   foods: Array<{ protein: number; mealType?: string }>,
   block: TimeBlock
 ): number =>
-  foods.reduce((sum, f) => (f.mealType === block ? sum + (f.protein || 0) : sum), 0);
+  foods.reduce((sum, f) => (normalizeMealTypeToBlock(f.mealType) === block ? sum + (f.protein || 0) : sum), 0);
 
 export const getProteinProgress = (consumed: number, goal: number): number =>
   Math.min(100, goal > 0 ? Math.round((consumed / goal) * 100) : 0);

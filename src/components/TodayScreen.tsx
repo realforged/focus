@@ -409,6 +409,7 @@ interface TodayScreenProps {
   loggedFoods?: LoggedFood[];
   onUpdateNutritionTargets?: (targets: NutritionTargets) => void;
   onOpenLogFoodForBlock?: (block: 'Morning' | 'Afternoon' | 'Evening' | 'Night') => void;
+  onRemoveFood?: (id: string) => void;
   onRefresh?: () => Promise<void>;
   pillarGoals?: PillarGoal[];
   focusedHabitIds?: string[];
@@ -425,7 +426,7 @@ interface TodayScreenProps {
 
 export default function TodayScreen({
   habits, routines, dateToday, onLogHabit, onBatchLogHabits, userPoints, currentUser,
-  nutritionTargets, onUpdateNutritionTargets, todaysFoodLog = [], loggedFoods = [], onOpenLogFoodForBlock,
+  nutritionTargets, onUpdateNutritionTargets, todaysFoodLog = [], loggedFoods = [], onOpenLogFoodForBlock, onRemoveFood,
   onRefresh,
   focusedHabitIds = [], onToggleFocusHabit,
   onDeleteHabit, onEditHabit, onDeleteRoutine, onEditRoutine, onFinishDay,
@@ -639,421 +640,24 @@ export default function TodayScreen({
     <div className="w-full bg-[#F4F6FA] text-[#1E293B] flex flex-col font-sans min-h-screen">
 
       {/* ── TOP HEADER ─────────────────────────────────────────────────── */}
-      <div className="px-5 pt-6 pb-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 select-none">
+      <div className="px-5 pt-6 pb-3 flex items-center justify-between select-none">
         <div>
           <h1 className="text-2xl font-black text-[#0F172A] tracking-tight leading-none">Today</h1>
-          <p className="text-[11px] text-slate-400 font-semibold mt-1">Day {currentDay} of 90 · Lock-In Mode</p>
-        </div>
-
-        {/* View Mode Toggle: Daily Scheduler vs Habits */}
-        <div className="flex items-center gap-1.5 bg-slate-200/80 p-1 rounded-2xl self-start sm:self-auto border border-slate-300/60">
-          <button
-            type="button"
-            onClick={() => setModeTab('scheduler')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition cursor-pointer ${
-              modeTab === 'scheduler'
-                ? 'bg-black text-white shadow-xs'
-                : 'text-slate-600 hover:text-black'
-            }`}
-          >
-            🗓️ Daily Scheduler
-          </button>
-          <button
-            type="button"
-            onClick={() => setModeTab('habits')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition cursor-pointer ${
-              modeTab === 'habits'
-                ? 'bg-black text-white shadow-xs'
-                : 'text-slate-600 hover:text-black'
-            }`}
-          >
-            ⚡ Habits & Routines
-          </button>
+          <p className="text-[11px] text-slate-400 font-semibold mt-1">Day {currentDay} of 90 · Daily Scheduler</p>
         </div>
       </div>
 
-      {modeTab === 'scheduler' ? (
-        <div className="px-4 py-3">
-          <DailyScheduler
-            loggedFoods={loggedFoods.length > 0 ? loggedFoods : todaysFoodLog}
-            nutritionTargets={nutritionTargets}
-            onUpdateNutritionTargets={onUpdateNutritionTargets}
-            onOpenLogFoodForBlock={onOpenLogFoodForBlock}
-            userPoints={userPoints}
-            currentUser={currentUser}
-          />
-        </div>
-      ) : (
-        <>
-
-      {/* ── CALENDAR STRIP WITH NAVIGATION & COMPLETION RINGS ───────────── */}
-      <div className="px-4 pb-2">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-black text-[#0F172A] tracking-wide uppercase">{currentMonthLabel}</span>
-            {(selectedDate !== dateToday || weekOffset !== 0) && (
-              <button
-                type="button"
-                onClick={() => {
-                  setWeekOffset(0);
-                  setSelectedDate(dateToday);
-                }}
-                className="text-[10px] font-bold bg-emerald-50 text-[#12B886] hover:bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200/60 transition flex items-center gap-1 cursor-pointer"
-              >
-                <RotateCcw className="w-2.5 h-2.5" />
-                <span>Today</span>
-              </button>
-            )}
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setWeekOffset(prev => prev - 1)}
-              className="p-1.5 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 transition cursor-pointer shadow-2xs"
-              title="Previous Days"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setWeekOffset(prev => prev + 1)}
-              className="p-1.5 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 transition cursor-pointer shadow-2xs"
-              title="Next Days"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-
-        <div className="flex gap-2 overflow-x-auto no-scrollbar select-none justify-between">
-          {weekDates.map(day => {
-            const isSelected = selectedDate === day.dateStr;
-            const dayPct = getDayPct(day.dateStr);
-            const ringColor = dayPct >= 100 ? '#10b981' : dayPct >= 50 ? '#f59e0b' : '#94a3b8';
-
-            const handleDateClick = () => {
-              if (day.isFuture) {
-                notifyError("Future dates are locked! Focus on today's targets.");
-                return;
-              }
-              setSelectedDate(day.dateStr);
-            };
-
-            return (
-              <button
-                key={day.dateStr}
-                onClick={handleDateClick}
-                aria-label={`${day.dayName} ${day.dayNum}${day.isToday ? ', today' : ''}${day.isFuture ? ', locked future date' : ''}, ${dayPct}% complete`}
-                aria-pressed={isSelected}
-                disabled={day.isFuture}
-                className={`flex flex-col items-center justify-center flex-1 py-1.5 rounded-2xl transition-all duration-200 relative min-w-[40px] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#12B886] focus-visible:ring-offset-1 ${
-                  day.isFuture
-                    ? 'bg-slate-100/70 border border-dashed border-slate-200 opacity-60 cursor-not-allowed'
-                    : isSelected
-                    ? 'bg-[#12B886] shadow-lg shadow-emerald-500/25 cursor-pointer'
-                    : 'bg-white hover:bg-slate-50 cursor-pointer'
-                }`}
-              >
-                <span className={`text-[9px] font-black tracking-widest mb-1 ${isSelected ? 'text-emerald-100' : day.isFuture ? 'text-slate-300' : 'text-slate-400'}`}>
-                  {day.dayName}
-                </span>
-                {/* Ring wrapping the date number or lock icon */}
-                <div className="relative flex items-center justify-center">
-                  {!isSelected && !day.isFuture && (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <DayRing pct={dayPct} size={36} stroke={3} color={ringColor} today={day.isToday} />
-                    </div>
-                  )}
-                  {day.isFuture ? (
-                    <div className="w-7 h-7 rounded-full bg-slate-200/60 flex items-center justify-center text-slate-400">
-                      <Lock className="w-3.5 h-3.5" />
-                    </div>
-                  ) : (
-                    <span className={`text-sm font-black z-10 leading-none ${isSelected ? 'text-white' : day.isToday ? 'text-[#12B886]' : 'text-[#0F172A]'}`}>
-                      {day.dayNum}
-                    </span>
-                  )}
-                </div>
-                {/* Completion % label for past days */}
-                {!isSelected && !day.isFuture && day.isPast && dayPct > 0 && (
-                  <span className={`text-[8px] font-bold mt-1 leading-none ${dayPct >= 100 ? 'text-emerald-500' : 'text-amber-500'}`}>
-                    {dayPct}%
-                  </span>
-                )}
-                {!isSelected && day.isToday && (
-                  <span className="text-[8px] font-bold text-[#12B886] mt-1 leading-none">TODAY</span>
-                )}
-                {day.isFuture && (
-                  <span className="text-[7px] font-bold text-slate-300 mt-1 leading-none uppercase">LOCKED</span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+      <div className="px-4 py-3">
+        <DailyScheduler
+          loggedFoods={loggedFoods.length > 0 ? loggedFoods : todaysFoodLog}
+          nutritionTargets={nutritionTargets}
+          onUpdateNutritionTargets={onUpdateNutritionTargets}
+          onOpenLogFoodForBlock={onOpenLogFoodForBlock}
+          onRemoveFood={onRemoveFood}
+          userPoints={userPoints}
+          currentUser={currentUser}
+        />
       </div>
-
-      {/* ── HERO PROGRESS CARD ─────────────────────────────────────────── */}
-      <div className="mx-4 my-3">
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-4 flex items-center gap-4">
-          {/* Big circular ring */}
-          <div className="relative shrink-0 flex items-center justify-center w-24 h-24">
-            <svg width="96" height="96" viewBox="0 0 96 96" style={{ transform: 'rotate(-90deg)' }} aria-hidden="true">
-              <circle cx="48" cy="48" r={ringR} fill="none" stroke="#f1f5f9" strokeWidth="7" />
-              <circle
-                cx="48" cy="48" r={ringR} fill="none"
-                stroke={todayScore >= 100 ? '#10b981' : todayScore >= 60 ? '#12B886' : todayScore >= 30 ? '#f59e0b' : '#e2e8f0'}
-                strokeWidth="7"
-                strokeDasharray={`${ringCirc * Math.min(todayScore / 100, 1)} ${ringCirc}`}
-                strokeLinecap="round"
-                style={{ transition: 'stroke-dasharray 0.8s ease' }}
-              />
-            </svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="text-2xl font-black text-[#0F172A] leading-none">{todayScore}<span className="text-sm font-bold text-slate-400">%</span></span>
-              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">Done</span>
-            </div>
-          </div>
-
-          {/* Right side info */}
-          <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-black text-[#0F172A] leading-tight">
-              {totalTasks === 0
-                ? 'No habits yet'
-                : todayScore >= 100 ? '🎉 All done!' : todayScore >= 80 ? '🔥 Almost there!' : todayScore >= 50 ? '💪 Halfway in' : todayScore > 0 ? '⚡ Keep going' : "Let's get started"}
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5 font-medium">
-              {totalTasks === 0 ? 'Add a habit to start your streak.' : `${completedTasks}/${totalTasks} tasks · ${tasksLeft > 0 ? `${tasksLeft} left` : 'All clear!'}`}
-            </p>
-
-            {/* 90-day progress bar */}
-            <div className="mt-3">
-              <div className="flex justify-between items-center mb-1">
-                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">90-Day Mission</span>
-                <span className="text-[9px] font-black text-[#12B886]">Day {currentDay}/90</span>
-              </div>
-              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-[#12B886] to-emerald-400 rounded-full transition-all duration-1000"
-                  style={{ width: `${missionProgressPercent}%` }} />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── TIME BLOCKS ────────────────────────────────────────────────── */}
-      <div className="px-4 pb-32 space-y-3">
-        {TIME_BLOCKS.map(block => {
-          const blockRoutines = routines.filter(r =>
-            block.id === 'Anytime'
-              ? r.timeBlock === 'Constant' || (r.timeBlock as string) === 'Anytime'
-              : r.timeBlock === block.id
-          );
-          const blockHabits = standaloneHabits.filter(h =>
-            block.id === 'Anytime'
-              ? !h.timeBlock || h.timeBlock === 'Anytime'
-              : h.timeBlock === block.id
-          );
-
-          const blockTotal = blockHabits.length + blockRoutines.reduce((acc, r) => {
-            return acc + habits.filter(h => r.habitIds.includes(h.id)).length;
-          }, 0);
-          const blockDone = blockHabits.filter(h => (h.history[selectedDate] || 0) >= h.target).length
-            + blockRoutines.reduce((acc, r) => {
-              return acc + habits.filter(h => r.habitIds.includes(h.id) && (h.history[selectedDate] || 0) >= h.target).length;
-            }, 0);
-
-          const blockPct = blockTotal > 0 ? Math.round((blockDone / blockTotal) * 100) : 0;
-          const isExpanded = expandedBlocks[block.id];
-          const isEmpty = blockRoutines.length === 0 && blockHabits.length === 0;
-          const isCurrentBlock = block.id === currentBlock && selectedDate === dateToday;
-          const isBlockDone = blockTotal > 0 && blockDone === blockTotal;
-          const panelId = `block-panel-${block.id}`;
-
-          return (
-            <div key={block.id}
-              className={`rounded-3xl border overflow-hidden transition-all duration-300 ${isCurrentBlock ? 'shadow-md' : 'shadow-sm'} ${block.border} bg-white`}>
-
-              {/* Block Header */}
-              <button
-                onClick={() => toggleBlock(block.id)}
-                aria-expanded={isExpanded}
-                aria-controls={panelId}
-                className={`w-full flex items-center justify-between p-4 cursor-pointer transition-all duration-200 text-left bg-gradient-to-r ${block.gradient} focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#12B886]`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="relative">
-                    <span className="text-2xl" aria-hidden="true">{block.emoji}</span>
-                    {isCurrentBlock && (
-                      <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-[#12B886] rounded-full border-2 border-white animate-pulse" />
-                    )}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-black text-[#0F172A]">{block.label}</h3>
-                      {isCurrentBlock && (
-                        <span className="text-[9px] font-black px-2 py-0.5 rounded-full bg-[#12B886] text-white uppercase tracking-wider">Now</span>
-                      )}
-                    </div>
-                    <p className="text-[10px] text-slate-400 font-medium mt-0.5">{block.range}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2.5">
-                  {/* Progress pill */}
-                  {blockTotal > 0 && (
-                    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black ${
-                      isBlockDone ? 'bg-emerald-500 text-white' : 'bg-white/80 text-slate-600 border border-slate-200'
-                    }`}>
-                      {isBlockDone ? <Check className="w-3 h-3 stroke-[3px]" /> : null}
-                      <span>{blockDone}/{blockTotal}</span>
-                    </div>
-                  )}
-                  {isEmpty && (
-                    <span className="text-[10px] text-slate-400 font-medium">Empty</span>
-                  )}
-                  <div className="w-6 h-6 rounded-full bg-white/80 border border-slate-200 flex items-center justify-center">
-                    {isExpanded
-                      ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" />
-                      : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
-                    }
-                  </div>
-                </div>
-              </button>
-
-              {/* Block slim progress bar */}
-              {blockTotal > 0 && (
-                <div className="h-0.5 bg-slate-100">
-                  <div className="h-full transition-all duration-700 rounded-full"
-                    style={{ width: `${blockPct}%`, backgroundColor: isBlockDone ? '#10b981' : block.accent }} />
-                </div>
-              )}
-
-              {/* Expanded content */}
-              <AnimatePresence initial={false}>
-                {isExpanded && (
-                  <motion.div
-                    id={panelId}
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: 'auto', opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-                    className="overflow-hidden"
-                  >
-                    <div className="px-4 pb-4 pt-3 space-y-2.5 bg-slate-50/50">
-                      {isEmpty ? (
-                        <p className="text-[11px] text-slate-400 text-center italic py-3">
-                          No habits or routines scheduled here yet.
-                        </p>
-                      ) : (
-                        <>
-                          {/* Routines first */}
-                          {blockRoutines.map(routine => (
-                            <RoutineRow
-                              key={routine.id}
-                              routine={routine}
-                              habits={habits}
-                              selectedDate={selectedDate}
-                              badgeLabel={block.id.toUpperCase()}
-                              onOpen={() => setActiveRoutineDetails(routine)}
-                              onEdit={onEditRoutine ? r => setEditingRoutine(r) : undefined}
-                              onDelete={onDeleteRoutine ? id => setDeleteConfirm({ type: 'routine', id, name: routine.name }) : undefined}
-                            />
-                          ))}
-
-                          {/* Separator */}
-                          {blockRoutines.length > 0 && blockHabits.length > 0 && (
-                            <div className="flex items-center gap-2 py-1">
-                              <div className="h-px bg-slate-200 flex-1" />
-                              <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Habits</span>
-                              <div className="h-px bg-slate-200 flex-1" />
-                            </div>
-                          )}
-
-                          {/* Standalone habits */}
-                          {blockHabits.map(h => (
-                            <HabitRow
-                              key={h.id}
-                              habit={h}
-                              selectedDate={selectedDate}
-                              onLogHabit={onLogHabit}
-                              isFocused={focusedHabitIds.includes(h.id)}
-                              onToggleFocus={onToggleFocusHabit}
-                              onEdit={onEditHabit ? habit => setEditingHabit(habit) : undefined}
-                              onDelete={onDeleteHabit ? id => setDeleteConfirm({ type: 'habit', id, name: h.name }) : undefined}
-                              onError={notifyError}
-                            />
-                          ))}
-                        </>
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* ── CONDITIONAL FINISH DAY BUTTON ──────────────────────────────── */}
-      <AnimatePresence>
-        {todayScore >= 80 && selectedDate === dateToday && (
-          <motion.div
-            initial={{ opacity: 0, y: 40 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 40 }}
-            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed bottom-20 md:bottom-6 left-0 right-0 flex justify-center px-6 z-30 pointer-events-none"
-          >
-            <button
-              onClick={handleFinishDay}
-              disabled={finishedLoading}
-              className="pointer-events-auto flex items-center gap-2.5 bg-[#12B886] hover:bg-emerald-500 text-white font-extrabold text-sm px-7 py-3.5 rounded-2xl shadow-xl shadow-emerald-500/35 transition-all active:scale-95 cursor-pointer disabled:opacity-70"
-            >
-              {finishedLoading
-                ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                : <>
-                    <Trophy className="w-4 h-4 fill-white stroke-none" />
-                    Lock In Day {currentDay} 🏁
-                  </>
-              }
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── MODALS ─────────────────────────────────────────────────────── */}
-
-      <AnimatePresence>
-        {activeRoutineDetails && (() => {
-          const fresh = routines.find(r => r.id === activeRoutineDetails.id) || activeRoutineDetails;
-          return (
-            <RoutineDetailsModal
-              isOpen={!!activeRoutineDetails}
-              onClose={() => setActiveRoutineDetails(null)}
-              routine={fresh}
-              habits={habits}
-              selectedDate={selectedDate}
-              onLogHabit={onLogHabit}
-              onMarkRoutineDone={handleMarkRoutineDone}
-              onRefresh={onRefresh}
-            />
-          );
-        })()}
-      </AnimatePresence>
-
-      <EditHabitModal
-        isOpen={!!editingHabit}
-        onClose={() => setEditingHabit(null)}
-        habit={editingHabit}
-        onSave={handleEditHabitSave}
-      />
-
-      <EditRoutineModal
-        isOpen={!!editingRoutine}
-        onClose={() => setEditingRoutine(null)}
-        routine={editingRoutine}
-        onSave={handleEditRoutineSave}
-      />
 
       {/* Celebration on locking in the day */}
       <AnimatePresence>
@@ -1113,8 +717,6 @@ export default function TodayScreen({
           </motion.div>
         )}
       </AnimatePresence>
-      </>
-      )}
 
     </div>
   );

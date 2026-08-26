@@ -26,6 +26,8 @@ import {
   Star,
   FileText,
   ClipboardList,
+  MoreVertical,
+  Target,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatDateString, dateToday } from '../data';
@@ -34,6 +36,7 @@ import {
   getBlockProteinGoal,
   BLOCK_PROTEIN_KEYS,
   type TimeBlock,
+  normalizeMealTypeToBlock,
 } from '../lib/nutritionBlocks';
 import ProteinBlockBar from './ProteinBlockBar';
 
@@ -110,6 +113,16 @@ const STANDARD_TASK_TEMPLATES_KEY = 'focus_now_standard_task_templates_v1';
 const LOCAL_NUTRITION_TARGETS_KEY = 'focus_now_scheduler_protein_targets_v1';
 const APP_NUTRITION_TARGETS_KEY = '90day_nutrition_targets';
 const APP_LOGGED_FOODS_KEY = '90day_logged_foods';
+const FAVORITE_PROTEINS_KEY = 'focus_now_favorite_proteins_v1';
+
+interface FavoriteProteinItem {
+  id: string;
+  name: string;
+  protein: number;
+  emoji?: string;
+}
+
+const DEFAULT_FAVORITE_PROTEINS: FavoriteProteinItem[] = [];
 const NOTIF_BANNER_KEY   = 'focus_now_notif_banner_dismissed';
 const DAILY_NOTES_KEY    = 'focus_now_daily_notes_v2';
 
@@ -372,6 +385,7 @@ interface DailySchedulerProps {
   nutritionTargets?: NutritionTargets;
   onUpdateNutritionTargets?: (targets: NutritionTargets) => void;
   onOpenLogFoodForBlock?: (block: 'Morning' | 'Afternoon' | 'Evening' | 'Night') => void;
+  onRemoveFood?: (id: string) => void;
   userPoints?: number;
   currentUser?: any;
 }
@@ -383,6 +397,7 @@ export default function DailyScheduler({
   nutritionTargets,
   onUpdateNutritionTargets,
   onOpenLogFoodForBlock,
+  onRemoveFood,
   userPoints,
   currentUser,
 }: DailySchedulerProps = {}) {
@@ -416,8 +431,25 @@ export default function DailyScheduler({
   const [localLoggedFoods, setLocalLoggedFoods] = useState<DailySchedulerProps['loggedFoods']>(readStoredLoggedFoods);
   const [editingProteinGoal, setEditingProteinGoal] = useState<{ block: TimeBlock; value: string } | null>(null);
   const [editingTotalProteinGoal, setEditingTotalProteinGoal] = useState<string | null>(null);
+  const [showProteinMenu, setShowProteinMenu] = useState(false);
+  const [showTargetModal, setShowTargetModal] = useState(false);
+  const [targetModalDraft, setTargetModalDraft] = useState({
+    totalProtein: '150',
+    morningProtein: '38',
+    afternoonProtein: '53',
+    eveningProtein: '45',
+    nightProtein: '15',
+  });
   const [showInlineProteinLog, setShowInlineProteinLog] = useState(false);
   const [inlineProteinEntry, setInlineProteinEntry] = useState({ name: '', protein: '', mealType: 'Morning' as 'Morning' | 'Afternoon' | 'Evening' | 'Night' });
+  const [favoriteProteins, setFavoriteProteins] = useState<FavoriteProteinItem[]>(() => {
+    try {
+      const raw = localStorage.getItem(FAVORITE_PROTEINS_KEY);
+      return raw ? JSON.parse(raw) : DEFAULT_FAVORITE_PROTEINS;
+    } catch {
+      return DEFAULT_FAVORITE_PROTEINS;
+    }
+  });
   const [sleepLogs, setSleepLogs] = useState<Record<string, { hours: number; quality: number; goal: number }>>(() => {
     try {
       const saved = localStorage.getItem('focus_now_scheduler_sleep_logs_v1');
@@ -743,7 +775,12 @@ export default function DailyScheduler({
 
   // ── Derived values ────────────────────────────────────────────────────────
   const activeNutritionTargets = mergeTargets(localNutritionTargets, nutritionTargets);
-  const schedulerLoggedFoods   = loggedFoods.length > 0 ? loggedFoods : (localLoggedFoods || []);
+  const schedulerLoggedFoods = useMemo(() => {
+    const map = new Map<string, any>();
+    (loggedFoods || []).forEach(f => map.set(f.id, f));
+    (localLoggedFoods || []).forEach(f => map.set(f.id, f));
+    return Array.from(map.values());
+  }, [loggedFoods, localLoggedFoods]);
 
   const totalProteinConsumed = useMemo(() => {
     const targetFoods = schedulerLoggedFoods.filter(f => f.date === selectedDate || (!f.date && selectedDate === dateToday));
@@ -991,6 +1028,145 @@ export default function DailyScheduler({
     onUpdateNutritionTargets?.(nextTargets);
     showToast(`Daily protein goal → ${nextGoal}g`);
     setEditingTotalProteinGoal(null);
+  };
+
+  const handleQuickLogFavoriteProtein = (item: FavoriteProteinItem) => {
+    const mealType = inlineProteinEntry.mealType || (selectedDate === dateToday ? getCurrentTimeBlock() : 'Morning');
+    const newEntry = {
+      id: 'plog_' + Math.random().toString(36).substring(2, 9),
+      name: item.name,
+      protein: item.protein,
+      calories: 0,
+      mealType,
+      date: selectedDate,
+    };
+    const updated = [...(localLoggedFoods || []), newEntry];
+    setLocalLoggedFoods(updated);
+    try {
+      localStorage.setItem(APP_LOGGED_FOODS_KEY, JSON.stringify(updated));
+    } catch {}
+    showToast(`Quick logged ${item.name} (${item.protein}g) to ${mealType}!`);
+  };
+
+  const handleAddFavoriteProtein = () => {
+    const name = inlineProteinEntry.name.trim();
+    const protein = Number.parseFloat(inlineProteinEntry.protein);
+    if (!name || !Number.isFinite(protein) || protein <= 0) {
+      showToast('Enter food name & protein grams to save as favorite');
+      return;
+    }
+    const newItem: FavoriteProteinItem = {
+      id: 'fav_' + Math.random().toString(36).substring(2, 9),
+      name,
+      protein: Math.round(protein * 10) / 10,
+      emoji: '⭐',
+    };
+    const updated = [...favoriteProteins, newItem];
+    setFavoriteProteins(updated);
+    try {
+      localStorage.setItem(FAVORITE_PROTEINS_KEY, JSON.stringify(updated));
+    } catch {}
+    showToast(`Saved "${name}" to favorite protein logs!`);
+  };
+
+  const handleRemoveFavoriteProtein = (id: string, name: string) => {
+    const updated = favoriteProteins.filter(f => f.id !== id);
+    setFavoriteProteins(updated);
+    try {
+      localStorage.setItem(FAVORITE_PROTEINS_KEY, JSON.stringify(updated));
+    } catch {}
+    showToast(`Removed "${name}" from favorites`);
+  };
+
+  const handleRemoveLoggedFood = (id: string, foodName: string) => {
+    const updated = (localLoggedFoods || []).filter(f => f.id !== id);
+    setLocalLoggedFoods(updated);
+    try {
+      localStorage.setItem(APP_LOGGED_FOODS_KEY, JSON.stringify(updated));
+    } catch {}
+    onRemoveFood?.(id);
+    showToast(`Removed "${foodName}" from food log`);
+  };
+
+  const handleResetProtein = () => {
+    if (window.confirm(`Reset protein intake to 0g for ${selectedDate === dateToday ? 'today' : selectedDate}?`)) {
+      const updated = (localLoggedFoods || []).filter(f => f.date && f.date !== selectedDate);
+      setLocalLoggedFoods(updated);
+      try {
+        localStorage.setItem(APP_LOGGED_FOODS_KEY, JSON.stringify(updated));
+      } catch {}
+      showToast('Protein intake reset to 0g');
+      setShowProteinMenu(false);
+    }
+  };
+
+  const handleResetTimeBlocksProgress = () => {
+    if (window.confirm(`Reset all time block tasks to uncompleted (0%) for ${selectedDate === dateToday ? 'today' : selectedDate}?`)) {
+      setTasks(prev => prev.map(t => {
+        if (t.date === selectedDate) {
+          return {
+            ...t,
+            completed: false,
+            subtasks: t.subtasks?.map(s => ({ ...s, completed: false }))
+          };
+        }
+        return t;
+      }));
+      showToast('All time block tasks reset to 0%');
+      setShowProteinMenu(false);
+    }
+  };
+
+  const autoSplitTargetModalDraft = (totalGrams: number) => {
+    setTargetModalDraft({
+      totalProtein: String(totalGrams),
+      morningProtein: String(Math.round(totalGrams * 0.25)),
+      afternoonProtein: String(Math.round(totalGrams * 0.35)),
+      eveningProtein: String(Math.round(totalGrams * 0.3)),
+      nightProtein: String(Math.round(totalGrams * 0.1)),
+    });
+  };
+
+  const openTargetModal = () => {
+    const mGoal = getBlockProteinGoal('Morning', activeNutritionTargets);
+    const aGoal = getBlockProteinGoal('Afternoon', activeNutritionTargets);
+    const eGoal = getBlockProteinGoal('Evening', activeNutritionTargets);
+    const nGoal = getBlockProteinGoal('Night', activeNutritionTargets);
+    setTargetModalDraft({
+      totalProtein: String(totalProteinGoal || 150),
+      morningProtein: String(mGoal),
+      afternoonProtein: String(aGoal),
+      eveningProtein: String(eGoal),
+      nightProtein: String(nGoal),
+    });
+    setShowTargetModal(true);
+    setShowProteinMenu(false);
+  };
+
+  const handleSaveTargetModal = () => {
+    const total = Math.max(1, Math.round(Number.parseFloat(targetModalDraft.totalProtein) || 150));
+    const m = Math.max(0, Math.round(Number.parseFloat(targetModalDraft.morningProtein) || 0));
+    const a = Math.max(0, Math.round(Number.parseFloat(targetModalDraft.afternoonProtein) || 0));
+    const e = Math.max(0, Math.round(Number.parseFloat(targetModalDraft.eveningProtein) || 0));
+    const n = Math.max(0, Math.round(Number.parseFloat(targetModalDraft.nightProtein) || 0));
+
+    const nextTargets: NutritionTargets = {
+      ...activeNutritionTargets,
+      protein: total,
+      morningProtein: m,
+      afternoonProtein: a,
+      eveningProtein: e,
+      nightProtein: n,
+    };
+
+    setLocalNutritionTargets(nextTargets);
+    try {
+      localStorage.setItem(LOCAL_NUTRITION_TARGETS_KEY, JSON.stringify(nextTargets));
+      localStorage.setItem(APP_NUTRITION_TARGETS_KEY, JSON.stringify(nextTargets));
+    } catch {}
+    onUpdateNutritionTargets?.(nextTargets);
+    showToast(`Protein target updated: ${total}g daily goal`);
+    setShowTargetModal(false);
   };
 
   const handleSaveInlineProteinLog = () => {
@@ -2536,14 +2712,14 @@ export default function DailyScheduler({
               const dateFoods = schedulerLoggedFoods.filter(f => f.date === selectedDate || (!f.date && selectedDate === dateToday));
               const blockData = blocks.map(b => {
                 const goal = getBlockProteinGoal(b, activeNutritionTargets);
-                const consumed = dateFoods.reduce((s, f) => f.mealType === b ? s + (f.protein || 0) : s, 0);
+                const consumed = dateFoods.reduce((s, f) => normalizeMealTypeToBlock(f.mealType) === b ? s + (f.protein || 0) : s, 0);
                 const pct = goal > 0 ? Math.min(100, Math.round((consumed / goal) * 100)) : 0;
                 return { block: b, goal, consumed, pct };
               });
               const isGoalMet = proteinCompletionPercentage >= 100;
 
               return (
-                <div className="rounded-2xl border border-neutral-200 bg-white overflow-hidden shadow-2xs">
+                <div className="rounded-2xl border border-neutral-200 bg-white relative z-10 shadow-2xs">
                   {/* Header row */}
                   <div className="px-4 py-3 flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2.5 min-w-0">
@@ -2562,6 +2738,7 @@ export default function DailyScheduler({
                         </div>
                       </div>
                     </div>
+
                     <div className="flex items-center gap-2 shrink-0">
                       {/* Log Protein button */}
                       <button
@@ -2573,49 +2750,111 @@ export default function DailyScheduler({
                             mealType: (selectedDate === dateToday ? getCurrentTimeBlock() : 'Morning') as 'Morning' | 'Afternoon' | 'Evening' | 'Night'
                           }));
                         }}
-                        className={`h-7 px-2.5 rounded-xl text-[10px] font-black transition-all active:scale-95 cursor-pointer flex items-center gap-1 ${
-                          showInlineProteinLog
-                            ? 'bg-black text-white'
-                            : 'border border-neutral-300 bg-white text-black hover:border-black'
-                        }`}
-                        title="Log protein intake"
+                        className="shrink-0 w-8 h-8 rounded-lg bg-black text-white flex items-center justify-center hover:bg-neutral-800 transition cursor-pointer active:scale-95"
+                        title={showInlineProteinLog ? "Close protein log" : "Log protein intake"}
                       >
-                        <span>{showInlineProteinLog ? '✕ Cancel' : '+ Log'}</span>
+                        {showInlineProteinLog ? (
+                          <X className="w-4 h-4 stroke-[3]" />
+                        ) : (
+                          <Plus className="w-4 h-4 stroke-[3]" />
+                        )}
                       </button>
-                      {/* Edit goal */}
-                      {editingTotalProteinGoal !== null ? (
-                        <form
-                          onSubmit={e => { e.preventDefault(); handleSaveTotalProteinGoal(); }}
-                          className="flex items-center gap-1"
-                          onClick={e => e.stopPropagation()}
-                        >
-                          <input
-                            type="number"
-                            min="1"
-                            value={editingTotalProteinGoal}
-                            onChange={e => setEditingTotalProteinGoal(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Escape') setEditingTotalProteinGoal(null); }}
-                            className="w-14 h-7 rounded-lg border border-black bg-white px-2 text-[10px] font-black text-black text-center focus:outline-none"
-                            autoFocus
-                          />
-                          <button type="submit" className="w-7 h-7 rounded-lg bg-black text-white flex items-center justify-center hover:bg-neutral-800 cursor-pointer transition active:scale-95" title="Save">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                          </button>
-                          <button type="button" onClick={() => setEditingTotalProteinGoal(null)} className="w-7 h-7 rounded-lg border border-neutral-300 text-neutral-500 hover:text-black flex items-center justify-center cursor-pointer transition active:scale-95 bg-white" title="Cancel">
-                            <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                          </button>
-                        </form>
-                      ) : (
+
+                      {/* Goal Percentage Pill */}
+                      <button
+                        type="button"
+                        onClick={openTargetModal}
+                        disabled={!onUpdateNutritionTargets}
+                        title="Click to change protein target"
+                        className="h-8 px-2.5 rounded-lg border border-neutral-200 bg-white text-[11px] font-black text-black hover:border-black transition cursor-pointer disabled:opacity-40 flex items-center gap-1"
+                      >
+                        <span>{proteinCompletionPercentage}%</span>
+                      </button>
+
+                      {/* Three-dots options menu */}
+                      <div className="relative z-50">
                         <button
                           type="button"
-                          onClick={() => setEditingTotalProteinGoal(String(totalProteinGoal))}
-                          disabled={!onUpdateNutritionTargets}
-                          title="Edit daily protein goal"
-                          className="h-7 px-2 rounded-xl border border-neutral-200 bg-white text-[10px] font-black text-black hover:border-black transition cursor-pointer disabled:opacity-40"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowProteinMenu(prev => !prev);
+                          }}
+                          className="w-8 h-8 rounded-lg border border-neutral-200 bg-white hover:bg-neutral-50 hover:border-black text-black flex items-center justify-center transition cursor-pointer active:scale-95"
+                          title="Protein options"
                         >
-                          {proteinCompletionPercentage}%
+                          <MoreVertical className="w-4 h-4 text-black" />
                         </button>
-                      )}
+
+                        {showProteinMenu && (
+                          <>
+                            <div
+                              className="fixed inset-0 z-40"
+                              onClick={() => setShowProteinMenu(false)}
+                            />
+                            <div
+                              className="absolute right-0 top-full mt-1.5 z-50 w-60 bg-white border border-neutral-200 rounded-2xl shadow-xl py-1.5 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+                              onClick={e => e.stopPropagation()}
+                            >
+                              <div className="px-3 py-1.5 border-b border-neutral-100">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-neutral-400">Protein & Block Actions</p>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={openTargetModal}
+                                className="w-full px-3.5 py-2.5 text-left text-xs font-bold text-neutral-800 hover:bg-neutral-100 flex items-center gap-2.5 transition cursor-pointer"
+                              >
+                                <Target className="w-4 h-4 text-violet-600 shrink-0" />
+                                <div className="flex flex-col">
+                                  <span>Change Target</span>
+                                  <span className="text-[10px] text-neutral-400 font-normal">Edit daily & per-block goals</span>
+                                </div>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setShowInlineProteinLog(prev => !prev);
+                                  setShowProteinMenu(false);
+                                }}
+                                className="w-full px-3.5 py-2.5 text-left text-xs font-bold text-neutral-800 hover:bg-neutral-100 flex items-center gap-2.5 transition cursor-pointer"
+                              >
+                                <Plus className="w-4 h-4 text-emerald-600 shrink-0" />
+                                <div className="flex flex-col">
+                                  <span>Log Protein Food</span>
+                                  <span className="text-[10px] text-neutral-400 font-normal">Add custom or favorite food</span>
+                                </div>
+                              </button>
+
+                              <div className="my-1 border-t border-neutral-100" />
+
+                              <button
+                                type="button"
+                                onClick={handleResetProtein}
+                                className="w-full px-3.5 py-2.5 text-left text-xs font-bold text-red-600 hover:bg-red-50 flex items-center gap-2.5 transition cursor-pointer"
+                              >
+                                <RotateCcw className="w-4 h-4 text-red-500 shrink-0" />
+                                <div className="flex flex-col">
+                                  <span>Reset Protein Intake (0g)</span>
+                                  <span className="text-[10px] text-red-400 font-normal">Clear logged protein for today</span>
+                                </div>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={handleResetTimeBlocksProgress}
+                                className="w-full px-3.5 py-2.5 text-left text-xs font-bold text-amber-700 hover:bg-amber-50 flex items-center gap-2.5 transition cursor-pointer"
+                              >
+                                <RotateCcw className="w-4 h-4 text-amber-600 shrink-0" />
+                                <div className="flex flex-col">
+                                  <span>Reset Time Blocks Progress</span>
+                                  <span className="text-[10px] text-amber-600/70 font-normal">Uncheck all tasks for today</span>
+                                </div>
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -2674,17 +2913,75 @@ export default function DailyScheduler({
                     </div>
                   </div>
 
-                  {/* Inline protein log form */}
+                  {/* Inline protein log form with Quick Favourites */}
                   {showInlineProteinLog && (
-                    <div className="px-4 pb-4 border-t border-neutral-100 pt-3 space-y-2.5">
-                      <div className="text-[10px] font-black uppercase tracking-wider text-neutral-400">Quick Protein Log</div>
+                    <div className="px-4 pb-4 border-t border-neutral-100 pt-3 space-y-3">
+                      {/* Target Time Block selector */}
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div className="text-[10px] font-black uppercase tracking-wider text-neutral-400">Target Time Block:</div>
+                        <div className="flex items-center gap-1">
+                          {(['Morning', 'Afternoon', 'Evening', 'Night'] as const).map(b => (
+                            <button
+                              key={b}
+                              type="button"
+                              onClick={() => setInlineProteinEntry(prev => ({ ...prev, mealType: b }))}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
+                                inlineProteinEntry.mealType === b
+                                  ? 'bg-black text-white shadow-2xs'
+                                  : 'border border-neutral-200 bg-white text-neutral-600 hover:border-neutral-400'
+                              }`}
+                            >
+                              {b}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* ⭐ Quick Favourites Section */}
+                      <div className="space-y-1.5 bg-neutral-50 p-2.5 rounded-xl border border-neutral-200">
+                        <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-neutral-500">
+                          <span>⭐ Quick Favorites (1-Tap Log to {inlineProteinEntry.mealType}):</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {favoriteProteins.map(fav => (
+                            <div
+                              key={fav.id}
+                              className="group relative inline-flex items-center"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => handleQuickLogFavoriteProtein(fav)}
+                                className="h-7 px-2.5 rounded-lg border border-neutral-200 bg-white hover:border-black hover:bg-neutral-900 hover:text-white text-[10px] font-black text-black transition-all cursor-pointer flex items-center gap-1 active:scale-95 shadow-2xs"
+                                title={`1-Tap log ${fav.name} (${fav.protein}g) to ${inlineProteinEntry.mealType}`}
+                              >
+                                <span>{fav.emoji || '🥩'}</span>
+                                <span>{fav.name}</span>
+                                <span className="text-[9px] opacity-75 font-bold">({fav.protein}g)</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRemoveFavoriteProtein(fav.id, fav.name);
+                                }}
+                                className="ml-1 w-4 h-4 rounded-full bg-neutral-200 hover:bg-red-500 hover:text-white text-neutral-500 text-[9px] font-black flex items-center justify-center cursor-pointer transition shrink-0"
+                                title="Remove favorite"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Custom log input */}
                       <div className="flex items-center gap-2 flex-wrap">
                         <input
                           type="text"
-                          placeholder="Food name (optional)"
+                          placeholder="Food name (e.g. Protein Shake)"
                           value={inlineProteinEntry.name}
                           onChange={e => setInlineProteinEntry(prev => ({ ...prev, name: e.target.value }))}
-                          className="flex-1 min-w-24 h-8 rounded-xl border border-neutral-300 bg-neutral-50 px-3 text-[11px] font-semibold text-black focus:outline-none focus:border-black transition"
+                          className="flex-1 min-w-28 h-8 rounded-xl border border-neutral-300 bg-white px-3 text-[11px] font-semibold text-black focus:outline-none focus:border-black transition"
                         />
                         <input
                           type="number"
@@ -2694,34 +2991,23 @@ export default function DailyScheduler({
                           value={inlineProteinEntry.protein}
                           onChange={e => setInlineProteinEntry(prev => ({ ...prev, protein: e.target.value }))}
                           onKeyDown={e => { if (e.key === 'Enter') handleSaveInlineProteinLog(); }}
-                          className="w-20 h-8 rounded-xl border border-neutral-300 bg-neutral-50 px-3 text-[11px] font-black text-black text-center focus:outline-none focus:border-black transition"
-                          autoFocus
+                          className="w-20 h-8 rounded-xl border border-neutral-300 bg-white px-3 text-[11px] font-black text-black text-center focus:outline-none focus:border-black transition"
                         />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="flex items-center gap-1 flex-1 flex-wrap">
-                          {(['Morning', 'Afternoon', 'Evening', 'Night'] as const).map(b => (
-                            <button
-                              key={b}
-                              type="button"
-                              onClick={() => setInlineProteinEntry(prev => ({ ...prev, mealType: b }))}
-                              className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer ${
-                                inlineProteinEntry.mealType === b
-                                  ? 'bg-black text-white'
-                                  : 'border border-neutral-200 bg-white text-neutral-600 hover:border-neutral-400'
-                              }`}
-                            >
-                              {b.substring(0, 3)}
-                            </button>
-                          ))}
-                        </div>
+                        <button
+                          type="button"
+                          onClick={handleAddFavoriteProtein}
+                          className="h-8 px-2.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 text-[10px] font-black transition cursor-pointer flex items-center gap-1"
+                          title="Save typed food & grams to Quick Favorites"
+                        >
+                          ⭐ Save Fav
+                        </button>
                         <button
                           type="button"
                           onClick={handleSaveInlineProteinLog}
-                          className="h-8 px-4 rounded-xl bg-black text-white text-[11px] font-black hover:bg-neutral-800 active:scale-95 transition cursor-pointer flex items-center gap-1.5"
+                          className="h-8 px-3.5 rounded-xl bg-black text-white text-[11px] font-black hover:bg-neutral-800 active:scale-95 transition cursor-pointer flex items-center gap-1"
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                          Save
+                          Log
                         </button>
                       </div>
                     </div>
@@ -2966,7 +3252,7 @@ export default function DailyScheduler({
                   {/* Protein pill — shows for all dates */}
                   {(() => {
                     const dateFoods = schedulerLoggedFoods.filter(f => f.date === selectedDate || (!f.date && selectedDate === dateToday));
-                    const blockP     = dateFoods.reduce((s, f) => f.mealType === block ? s + (f.protein || 0) : s, 0);
+                    const blockP     = dateFoods.reduce((s, f) => normalizeMealTypeToBlock(f.mealType) === block ? s + (f.protein || 0) : s, 0);
                     const blockGoal  = getBlockProteinGoal(block, activeNutritionTargets);
                     const pct        = Math.min(100, blockGoal > 0 ? Math.round((blockP / blockGoal) * 100) : 0);
                     return (
@@ -3897,6 +4183,144 @@ export default function DailyScheduler({
           </div>
         </div>
       </div>
+
+      {/* ── Protein Target Change Modal ────────────────────────────────────── */}
+      <AnimatePresence>
+        {showTargetModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white border border-neutral-200 rounded-3xl shadow-2xl max-w-md w-full p-5 space-y-4"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-2xl bg-black text-white flex items-center justify-center text-lg font-black shrink-0">
+                    🥩
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-black">Change Protein Target</h3>
+                    <p className="text-[11px] text-neutral-400 font-medium">Adjust total daily goal & per-block targets</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTargetModal(false)}
+                  className="w-8 h-8 rounded-xl bg-neutral-100 hover:bg-neutral-200 text-neutral-600 flex items-center justify-center transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Quick Target Presets */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black uppercase tracking-wider text-neutral-400">Quick Daily Presets:</label>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {[100, 120, 140, 150, 180, 200, 220].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => autoSplitTargetModalDraft(preset)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer ${
+                        Number(targetModalDraft.totalProtein) === preset
+                          ? 'bg-black text-white shadow-xs'
+                          : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-800'
+                      }`}
+                    >
+                      {preset}g
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Total Daily Target Input */}
+              <div className="space-y-1">
+                <label className="text-[11px] font-black text-black">Total Daily Protein Target (g):</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={targetModalDraft.totalProtein}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setTargetModalDraft(prev => ({ ...prev, totalProtein: val }));
+                      const num = Number(val);
+                      if (Number.isFinite(num) && num > 0) {
+                        autoSplitTargetModalDraft(num);
+                      }
+                    }}
+                    className="flex-1 h-10 rounded-2xl border border-neutral-300 px-3 text-sm font-black text-black focus:outline-none focus:border-black"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const num = Number(targetModalDraft.totalProtein) || 150;
+                      autoSplitTargetModalDraft(num);
+                    }}
+                    className="h-10 px-3 rounded-2xl bg-neutral-100 hover:bg-black hover:text-white text-xs font-bold transition cursor-pointer"
+                    title="Auto split 25% AM / 35% PM / 30% Eve / 10% Night"
+                  >
+                    Auto Split ⚡
+                  </button>
+                </div>
+              </div>
+
+              {/* Custom Per-Block Targets */}
+              <div className="space-y-2 pt-2 border-t border-neutral-100">
+                <label className="text-[10px] font-black uppercase tracking-wider text-neutral-400">Custom Per-Block Targets:</label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  {(['Morning', 'Afternoon', 'Evening', 'Night'] as TimeBlock[]).map(b => {
+                    const keyMap: Record<TimeBlock, keyof typeof targetModalDraft> = {
+                      Morning: 'morningProtein',
+                      Afternoon: 'afternoonProtein',
+                      Evening: 'eveningProtein',
+                      Night: 'nightProtein',
+                    };
+                    const key = keyMap[b];
+                    return (
+                      <div key={b} className="p-2.5 rounded-2xl border border-neutral-200 bg-neutral-50 space-y-1">
+                        <div className="text-[10px] font-black text-neutral-600 uppercase">{b}</div>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min="0"
+                            value={targetModalDraft[key]}
+                            onChange={e => setTargetModalDraft(prev => ({ ...prev, [key]: e.target.value }))}
+                            className="w-full h-8 rounded-xl border border-neutral-300 bg-white px-2 text-xs font-black text-center focus:outline-none focus:border-black"
+                          />
+                          <span className="text-[10px] font-bold text-neutral-400">g</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-neutral-100">
+                <button
+                  type="button"
+                  onClick={() => setShowTargetModal(false)}
+                  className="h-10 px-4 rounded-2xl border border-neutral-300 text-xs font-bold text-neutral-600 hover:bg-neutral-100 transition cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveTargetModal}
+                  className="h-10 px-5 rounded-2xl bg-black text-white text-xs font-black hover:bg-neutral-800 transition cursor-pointer shadow-xs active:scale-95 flex items-center gap-1.5"
+                >
+                  <Check className="w-4 h-4 stroke-[3]" />
+                  <span>Save Target</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

@@ -5,10 +5,15 @@ services:
     plan: free
     buildCommand: npm ci && npm run build
     startCommand: npm start
+    healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: 22.14.0
+      - key: NODE_ENV
+        value: production
       - key: JWT_SECRET
+        sync: false
+      - key: DATABASE_URL
         sync: false
       - key: SUPABASE_PROJECT_REF
         sync: false
@@ -22,9 +27,3 @@ services:
         value: postgres
       - key: SUPABASE_DB_USER
         value: postgres
-      - key: DATABASE_URL
-        sync: false
-      - key: VITE_SUPABASE_URL
-        sync: false
-      - key: VITE_SUPABASE_ANON_KEY
-        sync: false

@@ -3,17 +3,17 @@ dotenv.config();
 
 import path from 'path';
 import fs from 'fs';
-import { createRequire } from 'module';
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
+import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
+import Database from 'better-sqlite3';
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
 import { Pool } from 'pg';
 import { usePostgres } from './dialect.ts';
 import * as pgSchema from './schema.pg.ts';
 import * as sqliteSchema from './schema.sqlite.ts';
 import { initPgDatabase } from './init-pg.ts';
+import { initSqliteDatabase } from './init-sqlite.ts';
 import { createPgPoolConfig } from './connection.ts';
-
-const require = createRequire(import.meta.url);
 
 export { usePostgres };
 
@@ -30,8 +30,6 @@ function createSqliteDb(): AppDb {
   }
 
   const dbPath = path.join(dataDir, 'habit_mountain.db');
-  const { initSqliteDatabase } = require('./init-sqlite.ts') as typeof import('./init-sqlite.ts');
-  const { drizzle: drizzleSqlite } = require('drizzle-orm/better-sqlite3') as typeof import('drizzle-orm/better-sqlite3');
   const sqlite = initSqliteDatabase(dbPath);
   console.log(`Using local SQLite database at ${dbPath}`);
   return drizzleSqlite(sqlite, { schema: sqliteSchema });
@@ -68,7 +66,9 @@ async function createPostgresDb(): Promise<AppDb> {
     if (process.env.VERCEL === '1') {
       throw err;
     }
-    console.warn('⚡ Falling back to local SQLite database so server can boot cleanly...');
+    // On Render/Railway: log a clear message about fixing DATABASE_URL but still boot with SQLite
+    console.warn('⚡ DATABASE_URL is invalid or unreachable. Fix the DATABASE_URL environment variable in Render dashboard.');
+    console.warn('⚡ Booting with local SQLite as a temporary fallback (data will not persist across deploys).');
     return createSqliteDb();
   }
 }

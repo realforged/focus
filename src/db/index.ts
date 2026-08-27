@@ -49,24 +49,28 @@ async function createPostgresDb(): Promise<AppDb> {
     );
   }
 
-  const pool = createPool();
-  pool.on('error', (err) => {
-    console.error('Unexpected error on idle SQL pool client:', err);
-  });
-
   try {
+    const pool = createPool();
+    pool.on('error', (err) => {
+      console.error('Unexpected error on idle SQL pool client:', err);
+    });
+
     await initPgDatabase(pool);
+    console.log('Connected to PostgreSQL.');
+    return drizzlePg(pool, { schema: pgSchema }) as unknown as AppDb;
   } catch (err: any) {
+    console.error('⚠️ PostgreSQL connection failed:', err?.message || err);
     if (err?.code === '28P01') {
-      throw new Error(
-        'Supabase rejected the PostgreSQL password. In Render, use the Database Password from Supabase Project Settings > Database, not the anon API key or JWT secret. If DATABASE_URL contains special characters in the password, either URL-encode the password or set SUPABASE_DB_PASSWORD instead.'
+      console.error(
+        'Supabase rejected the PostgreSQL password. In Render, use the Database Password from Supabase Project Settings > Database.'
       );
     }
-    throw err;
+    if (process.env.VERCEL === '1') {
+      throw err;
+    }
+    console.warn('⚡ Falling back to local SQLite database so server can boot cleanly...');
+    return createSqliteDb();
   }
-  console.log('Connected to PostgreSQL.');
-  return drizzlePg(pool, { schema: pgSchema }) as unknown as AppDb;
 }
 
 export const db: AppDb = usePostgres ? await createPostgresDb() : createSqliteDb();
-

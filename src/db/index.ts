@@ -14,6 +14,7 @@ import * as sqliteSchema from './schema.sqlite.ts';
 import { initPgDatabase } from './init-pg.ts';
 import { initSqliteDatabase } from './init-sqlite.ts';
 import { createPgPoolConfig } from './connection.ts';
+import { setActiveDialect } from './active-dialect.ts';
 
 export { usePostgres };
 
@@ -31,6 +32,7 @@ function createSqliteDb(): AppDb {
 
   const dbPath = path.join(dataDir, 'habit_mountain.db');
   const sqlite = initSqliteDatabase(dbPath);
+  setActiveDialect('sqlite');
   console.log(`Using local SQLite database at ${dbPath}`);
   return drizzleSqlite(sqlite, { schema: sqliteSchema });
 }
@@ -54,6 +56,7 @@ async function createPostgresDb(): Promise<AppDb> {
     });
 
     await initPgDatabase(pool);
+    setActiveDialect('postgres');
     console.log('Connected to PostgreSQL.');
     return drizzlePg(pool, { schema: pgSchema }) as unknown as AppDb;
   } catch (err: any) {
@@ -66,8 +69,7 @@ async function createPostgresDb(): Promise<AppDb> {
     if (process.env.VERCEL === '1') {
       throw err;
     }
-    // On Render/Railway: log a clear message about fixing DATABASE_URL but still boot with SQLite
-    console.warn('⚡ DATABASE_URL is invalid or unreachable. Fix the DATABASE_URL environment variable in Render dashboard.');
+    console.warn('⚡ DATABASE_URL is invalid or unreachable. Fix the DATABASE_URL in Render dashboard.');
     console.warn('⚡ Booting with local SQLite as a temporary fallback (data will not persist across deploys).');
     return createSqliteDb();
   }

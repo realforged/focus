@@ -22,7 +22,6 @@ interface AuthRequest extends express.Request {
   };
 }
 
-
 function authenticateToken(req: AuthRequest, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
@@ -43,7 +42,7 @@ function authenticateToken(req: AuthRequest, res: express.Response, next: expres
 export function createApp() {
   const app = express();
 
-  // CORS Middleware for Vercel Frontend -> Render Backend communication
+  // CORS Middleware for cross-origin requests
   app.use((req, res, next) => {
     res.header("Access-Control-Allow-Origin", "*");
     res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -58,7 +57,6 @@ export function createApp() {
 
   // Logging Middleware
   app.use((req, res, next) => {
-    // Redact sensitive fields before logging
     const safeHeaders = { ...req.headers };
     delete safeHeaders.authorization;
     delete safeHeaders.cookie;
@@ -76,17 +74,19 @@ export function createApp() {
     next();
   });
 
-  // Health Check Endpoint (For Cloud Deployment / Render Health Checks)
+  // Health Check Endpoint (For Cloud Deployment / Render / Vercel Health Checks)
   app.get(["/api/health", "/health"], (req, res) => {
     res.status(200).json({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() });
   });
+
+  const apiRouter = express.Router();
 
   // --- REST ENDPOINTS ---
 
   // 1. Authentication
 
   // Register
-  app.post("/api/auth/register", async (req, res) => {
+  apiRouter.post("/auth/register", async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required fields." });
@@ -148,7 +148,7 @@ export function createApp() {
       res.status(201).json({
         token,
         user: {
-          id: newUser.uid, // mapped to id for frontend compatibility
+          id: newUser.uid,
           email: newUser.email,
           total_points: newUser.totalPoints,
           locked_in_days: newUser.lockedInDays,
@@ -160,12 +160,12 @@ export function createApp() {
       });
     } catch (err: any) {
       console.error("Register error:", err);
-      res.status(500).json({ error: "Failed to register new account. " + err.message });
+      res.status(500).json({ error: "Failed to register new account. " + (err?.message || err) });
     }
   });
 
   // Login
-  app.post("/api/auth/login", async (req, res) => {
+  apiRouter.post("/auth/login", async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required fields." });
@@ -194,7 +194,7 @@ export function createApp() {
       res.json({
         token,
         user: {
-          id: user.uid, // mapped to id for frontend compatibility
+          id: user.uid,
           email: user.email,
           total_points: user.totalPoints,
           locked_in_days: user.lockedInDays,
@@ -211,7 +211,7 @@ export function createApp() {
   });
 
   // Get User Profile
-  app.get("/api/user/me", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.get("/user/me", authenticateToken as any, async (req: AuthRequest, res) => {
     try {
       const existingUser = await db.select().from(users).where(eq(users.uid, req.user!.uid));
       if (existingUser.length === 0) {
@@ -219,7 +219,7 @@ export function createApp() {
       }
       const user = existingUser[0];
       res.json({
-        id: user.uid, // mapped to id for frontend compatibility
+        id: user.uid,
         email: user.email,
         total_points: user.totalPoints,
         locked_in_days: user.lockedInDays,
@@ -234,7 +234,7 @@ export function createApp() {
   });
 
   // Sync user stats
-  app.post("/api/user/sync-journey", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.post("/user/sync-journey", authenticateToken as any, async (req: AuthRequest, res) => {
     const { journey_start_date, total_points, locked_in_days, consecutive_locked_in_streak } = req.body;
     try {
       const existingUser = await db.select().from(users).where(eq(users.uid, req.user!.uid));
@@ -268,19 +268,17 @@ export function createApp() {
     }
   });
 
-  // Reset user data (with 90 days fresh start)
-  app.post("/api/user/reset", authenticateToken as any, async (req: AuthRequest, res) => {
+  // Reset user data
+  apiRouter.post("/user/reset", authenticateToken as any, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const todayStr = new Date().toISOString().split('T')[0];
 
-      // Purge logs, habits and routines for user
       await db.delete(habitLogs).where(eq(habitLogs.userId, uid));
       await db.delete(routineLogs).where(eq(routineLogs.userId, uid));
       await db.delete(habits).where(eq(habits.userId, uid));
       await db.delete(routines).where(eq(routines.userId, uid));
 
-      // Reset user challenge stats back to Day 1 with zero values
       await db.update(users)
         .set({
           totalPoints: 0,
@@ -292,7 +290,6 @@ export function createApp() {
         })
         .where(eq(users.uid, uid));
 
-      // Seed baseline habits again so they can start fresh today immediately
       const initialSeedHabits = [
         { id: `fit-gym-${uid}`, name: "Power Workout", category: "Fitness", points: 30, type: "Count", target: 1, unit: "workout", repeat: "Daily", enableFocusTimer: 0 },
         { id: `read-book-${uid}`, name: "Technical Reading", category: "Reading", points: 15, type: "Timer", target: 30, unit: "min", repeat: "Daily", enableFocusTimer: 1 },
@@ -325,7 +322,7 @@ export function createApp() {
   // 2. Habits Endpoints
 
   // Get habits
-  app.get("/api/habits", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.get("/habits", authenticateToken as any, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const [userHabits, allLogs] = await Promise.all([
@@ -367,7 +364,7 @@ export function createApp() {
   });
 
   // Create habit
-  app.post("/api/habits", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.post("/habits", authenticateToken as any, async (req: AuthRequest, res) => {
     const { id, name, category, points, type, target, unit, repeat, repeatDays, timeOfDay, timeBlock, enableFocusTimer, routineId } = req.body;
     if (!name || !category || target === undefined) {
       return res.status(400).json({ error: "Missing required habit parameters." });
@@ -419,7 +416,7 @@ export function createApp() {
   });
 
   // Log habit (increment)
-  app.post("/api/habits/:id/log", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.post("/habits/:id/log", authenticateToken as any, async (req: AuthRequest, res) => {
     const { id } = req.params;
     const { date, value } = req.body;
 
@@ -459,7 +456,7 @@ export function createApp() {
   });
 
   // Set absolute habit log value
-  app.post("/api/habits/:id/log-absolute", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.post("/habits/:id/log-absolute", authenticateToken as any, async (req: AuthRequest, res) => {
     const { id } = req.params;
     const { date, value } = req.body;
 
@@ -498,12 +495,11 @@ export function createApp() {
   });
 
   // Delete habit
-  app.delete("/api/habits/:id", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.delete("/habits/:id", authenticateToken as any, async (req: AuthRequest, res) => {
     try {
       const habitIdToDelete = req.params.id;
       const uid = req.user!.uid;
 
-      // Delete the habit (cascade onDelete deletes habit_logs)
       await db.delete(habits).where(
         and(
           eq(habits.id, habitIdToDelete),
@@ -511,7 +507,6 @@ export function createApp() {
         )
       );
 
-      // Clean up reference in any of the user's routines
       const userRoutines = await db.select().from(routines).where(eq(routines.userId, uid));
       for (const rt of userRoutines) {
         if (rt.habitIds) {
@@ -538,7 +533,7 @@ export function createApp() {
   // 3. Routines Endpoints
 
   // Get routines
-  app.get("/api/routines", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.get("/routines", authenticateToken as any, async (req: AuthRequest, res) => {
     try {
       const uid = req.user!.uid;
       const [userRoutines, allLogs] = await Promise.all([
@@ -573,7 +568,7 @@ export function createApp() {
   });
 
   // Create routine
-  app.post("/api/routines", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.post("/routines", authenticateToken as any, async (req: AuthRequest, res) => {
     const { id, name, points, timeBlock, repeat, repeatDays, habitIds } = req.body;
     if (!name || !timeBlock || !habitIds || !Array.isArray(habitIds)) {
       return res.status(400).json({ error: "Missing required routine properties." });
@@ -594,7 +589,6 @@ export function createApp() {
         habitIds: JSON.stringify(habitIds),
       });
 
-      // Link any newly created habits to this routine id
       for (const hId of habitIds) {
         await db.update(habits)
           .set({ routineId: newId })
@@ -622,7 +616,7 @@ export function createApp() {
   });
 
   // Toggle routine completion status
-  app.post("/api/routines/:id/status", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.post("/routines/:id/status", authenticateToken as any, async (req: AuthRequest, res) => {
     const { id } = req.params;
     const { date, completed } = req.body;
 
@@ -660,7 +654,7 @@ export function createApp() {
   });
 
   // Update routine
-  app.put("/api/routines/:id", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.put("/routines/:id", authenticateToken as any, async (req: AuthRequest, res) => {
     const { id } = req.params;
     const { name, points, timeBlock, repeat, repeatDays, habitIds } = req.body;
     const uid = req.user!.uid;
@@ -686,7 +680,6 @@ export function createApp() {
       if (habitIds !== undefined && Array.isArray(habitIds)) {
         updateData.habitIds = JSON.stringify(habitIds);
 
-        // Unlink old habits that are no longer in this routine
         const oldHabitIds = existing[0].habitIds ? JSON.parse(existing[0].habitIds) : [];
         for (const oldId of oldHabitIds) {
           if (!habitIds.includes(oldId)) {
@@ -701,7 +694,6 @@ export function createApp() {
           }
         }
 
-        // Link new habits
         for (const newId of habitIds) {
           await db.update(habits)
             .set({ routineId: id })
@@ -734,12 +726,11 @@ export function createApp() {
   });
 
   // Delete Routine
-  app.delete("/api/routines/:id", authenticateToken as any, async (req: AuthRequest, res) => {
+  apiRouter.delete("/routines/:id", authenticateToken as any, async (req: AuthRequest, res) => {
     try {
       const routineIdToDelete = req.params.id;
       const uid = req.user!.uid;
 
-      // Unlink habits linked to this routine
       await db.update(habits)
         .set({ routineId: null })
         .where(
@@ -749,7 +740,6 @@ export function createApp() {
           )
         );
 
-      // Delete routine (cascade onDelete deletes routine_logs)
       await db.delete(routines).where(
         and(
           eq(routines.id, routineIdToDelete),
@@ -762,6 +752,10 @@ export function createApp() {
       res.status(500).json({ error: "Purging routines record registry failed." });
     }
   });
+
+  // Mount API router for both /api prefix and root level (for serverless environments)
+  app.use("/api", apiRouter);
+  app.use(apiRouter);
 
   return app;
 }

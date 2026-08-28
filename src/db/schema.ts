@@ -3,28 +3,39 @@ import * as pgSchema from './schema.pg.ts';
 import * as sqliteSchema from './schema.sqlite.ts';
 
 // Lazy schema selector - resolves to the dialect that is actually connected.
-// This is important: if usePostgres=true but Postgres failed and fell back to SQLite,
-// this will correctly return sqliteSchema tables (without defaultNow() etc).
-function s() {
+function getSchema() {
   return getActiveDialect() === 'postgres' ? pgSchema : sqliteSchema;
 }
 
-export const users = new Proxy({} as typeof pgSchema.users, {
-  get: (_t, p) => (s().users as any)[p],
-});
+// Full proxy wrapper delegating all reflection traps to the active Drizzle table object
+function createTableProxy<T extends object>(getTable: () => T): T {
+  return new Proxy({} as T, {
+    get(_target, prop, receiver) {
+      const table = getTable();
+      const val = Reflect.get(table, prop, table);
+      return typeof val === 'function' ? val.bind(table) : val;
+    },
+    has(_target, prop) {
+      return Reflect.has(getTable(), prop);
+    },
+    ownKeys(_target) {
+      return Reflect.ownKeys(getTable());
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      const desc = Reflect.getOwnPropertyDescriptor(getTable(), prop);
+      if (desc) {
+        desc.configurable = true;
+      }
+      return desc;
+    },
+    getPrototypeOf(_target) {
+      return Reflect.getPrototypeOf(getTable());
+    }
+  });
+}
 
-export const habits = new Proxy({} as typeof pgSchema.habits, {
-  get: (_t, p) => (s().habits as any)[p],
-});
-
-export const habitLogs = new Proxy({} as typeof pgSchema.habitLogs, {
-  get: (_t, p) => (s().habitLogs as any)[p],
-});
-
-export const routines = new Proxy({} as typeof pgSchema.routines, {
-  get: (_t, p) => (s().routines as any)[p],
-});
-
-export const routineLogs = new Proxy({} as typeof pgSchema.routineLogs, {
-  get: (_t, p) => (s().routineLogs as any)[p],
-});
+export const users = createTableProxy(() => getSchema().users);
+export const habits = createTableProxy(() => getSchema().habits);
+export const habitLogs = createTableProxy(() => getSchema().habitLogs);
+export const routines = createTableProxy(() => getSchema().routines);
+export const routineLogs = createTableProxy(() => getSchema().routineLogs);

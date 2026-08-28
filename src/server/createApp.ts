@@ -206,7 +206,7 @@ export function createApp() {
       });
     } catch (err: any) {
       console.error("Login error:", err);
-      res.status(500).json({ error: "An unexpected error occurred during login." });
+      res.status(500).json({ error: "An unexpected error occurred during login. " + (err?.message || err) });
     }
   });
 

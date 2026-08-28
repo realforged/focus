@@ -2918,6 +2918,55 @@ export default function DailyScheduler({
                     </div>
                   </div>
 
+                  {/* Active Block Smart Context Banner */}
+                  {(() => {
+                    const activeBlock = (selectedDate === dateToday ? getCurrentTimeBlock() : 'Morning') as TimeBlock;
+                    const activeBlockData = blockData.find(b => b.block === activeBlock);
+                    const activeRemaining = activeBlockData ? Math.max(0, activeBlockData.goal - activeBlockData.consumed) : 0;
+                    const isHit = activeRemaining === 0 && Boolean(activeBlockData && activeBlockData.goal > 0);
+
+                    return (
+                      <div className="px-4 pb-3">
+                        <div className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 transition-all ${
+                          isHit
+                            ? 'bg-emerald-50/90 border-emerald-200 text-emerald-950'
+                            : 'bg-neutral-50/90 border-neutral-200 text-neutral-900'
+                        }`}>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-sm shrink-0">
+                              {isHit ? '🎉' : '⚡'}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-black truncate">
+                                {activeBlock} Block: <span className="font-extrabold">{activeBlockData?.consumed || 0}g</span> / {activeBlockData?.goal || 0}g
+                              </p>
+                              <p className="text-[10px] opacity-75 font-semibold">
+                                {isHit
+                                  ? `✓ Target achieved for ${activeBlock.toLowerCase()}!`
+                                  : `${activeRemaining}g remaining to hit ${activeBlock.toLowerCase()} goal`}
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowInlineProteinLog(true);
+                              setInlineProteinEntry(prev => ({ ...prev, mealType: activeBlock }));
+                            }}
+                            className={`h-7 px-3 rounded-lg text-[10px] font-black transition cursor-pointer flex items-center gap-1 active:scale-95 shadow-2xs shrink-0 ${
+                              isHit
+                                ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                : 'bg-black text-white hover:bg-neutral-800'
+                            }`}
+                          >
+                            <Plus className="w-3 h-3 stroke-[3]" />
+                            <span>{isHit ? '+ Add Extra' : `Log ${activeBlock}`}</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Inline protein log form with Quick Favourites */}
                   {showInlineProteinLog && (
                     <div className="px-4 pb-4 border-t border-neutral-100 pt-3 space-y-3">
@@ -4015,6 +4064,27 @@ export default function DailyScheduler({
                                           <Bell className="w-2.5 h-2.5" />
                                           {task.recurrence.reminderTime}
                                         </span>
+                                      )}
+
+                                      {/* Smart Food Task Protein Quick-Log Badge */}
+                                      {/\b(protein|shake|whey|eggs?|chicken|meal|breakfast|lunch|dinner|snack|food|diet|eat|paneer|tofu)\b/i.test(task.title) && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setShowInlineProteinLog(true);
+                                            setInlineProteinEntry({
+                                              name: task.title.replace(/[^\w\s]/gi, '').trim(),
+                                              protein: '25',
+                                              mealType: task.timeBlock,
+                                            });
+                                          }}
+                                          className="text-[9px] font-black text-amber-900 bg-amber-100/90 hover:bg-amber-200 border border-amber-300 px-1.5 py-0.5 rounded-full flex items-center gap-1 transition cursor-pointer shrink-0"
+                                          title="Quick log protein from this meal/shake task"
+                                        >
+                                          <span>🥩</span>
+                                          <span>+ Log Protein</span>
+                                        </button>
                                       )}
                                     </div>
                                   </div>

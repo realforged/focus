@@ -16,17 +16,21 @@ import {
   BookOpen,
   Target,
   Zap,
+  Flame,
+  Droplets,
+  RotateCcw,
 } from 'lucide-react';
 import { formatDateString, dateToday } from '../data';
-import { getDailyPriority, saveDailyPriority, getTomorrowDateStr } from '../lib/journal';
+import { getDailyPriority, saveDailyPriority, getTomorrowDateStr, getYesterdayDateStr } from '../lib/journal';
 import type { TimeBlock } from '../lib/nutritionBlocks';
-import { getBlockProteinConsumed, getBlockProteinGoal, normalizeMealTypeToBlock } from '../lib/nutritionBlocks';
+import { getBlockProteinConsumed, getBlockProteinGoal, normalizeMealTypeToBlock, getCurrentTimeBlock } from '../lib/nutritionBlocks';
+import { getStoredFavoriteProteins, type FavoriteProteinItem } from '../lib/favoriteProteins';
 
 // Shared Scheduler tasks storage key to stay 100% unified with DailyScheduler
 const SCHEDULER_STORAGE_KEY = 'focus_now_daily_scheduler_tasks_v10';
 const NUTRITION_TARGETS_KEY = 'focus_now_scheduler_protein_targets_v1';
 const LOGGED_FOODS_KEY = '90day_logged_foods';
-
+const VITALS_STORAGE_KEY = 'focus_now_quick_vitals_v1';
 
 export interface SubTask {
   id: string;
@@ -48,7 +52,6 @@ export interface TodayTask {
   createdAt: string;
   isRecurrenceTemplate?: boolean;
 }
-
 
 interface TodayScreenProps {
   dateToday: string;
@@ -101,7 +104,12 @@ export default function TodayScreen({
     });
   }, [selectedDate]);
 
-  // ── ONE THING (Today's #1 Priority) ──────────────────────────────────────
+  // Current active time block
+  const currentActiveBlock = useMemo<TimeBlock>(() => {
+    return getCurrentTimeBlock();
+  }, []);
+
+  // ── ONE THING (Today's #1 Priority) & Streak ─────────────────────────────
   const [oneThing, setOneThing] = useState<string>(() => getDailyPriority(initialDateToday));
   const [isEditingOneThing, setIsEditingOneThing] = useState(false);
   const [oneThingDraft, setOneThingDraft] = useState('');
@@ -110,6 +118,28 @@ export default function TodayScreen({
     const val = getDailyPriority(selectedDate);
     setOneThing(val);
   }, [selectedDate]);
+
+  // Calculate One Thing Streak
+  const priorityStreak = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('focus_now_daily_priorities_v1');
+      if (!raw) return 0;
+      const map = JSON.parse(raw);
+      let streak = 0;
+      let curr = selectedDate;
+      if (!map[curr]?.trim()) {
+        curr = getYesterdayDateStr(curr);
+      }
+      while (map[curr] && map[curr].trim().length > 0) {
+        streak++;
+        curr = getYesterdayDateStr(curr);
+        if (streak > 365) break;
+      }
+      return streak;
+    } catch {
+      return 0;
+    }
+  }, [selectedDate, oneThing]);
 
   // Sync priority updates
   useEffect(() => {
@@ -134,6 +164,41 @@ export default function TodayScreen({
     setIsEditingOneThing(false);
   };
 
+  // ── Quick Vitals (Water & Energy) ────────────────────────────────────────
+  const [vitals, setVitals] = useState<{ water: number; energy: number }>(() => {
+    try {
+      const raw = localStorage.getItem(VITALS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed[initialDateToday]) return parsed[initialDateToday];
+      }
+    } catch {}
+    return { water: 0, energy: 0 };
+  });
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(VITALS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setVitals(parsed[selectedDate] || { water: 0, energy: 0 });
+      } else {
+        setVitals({ water: 0, energy: 0 });
+      }
+    } catch {}
+  }, [selectedDate]);
+
+  const updateVitals = (next: Partial<{ water: number; energy: number }>) => {
+    const updated = { ...vitals, ...next };
+    setVitals(updated);
+    try {
+      const raw = localStorage.getItem(VITALS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      parsed[selectedDate] = updated;
+      localStorage.setItem(VITALS_STORAGE_KEY, JSON.stringify(parsed));
+    } catch {}
+  };
+
   // ── Unified Scheduler Tasks ──────────────────────────────────────────────
   const [allTasks, setAllTasks] = useState<TodayTask[]>(() => {
     try {
@@ -143,7 +208,6 @@ export default function TodayScreen({
     return [];
   });
 
-  // Reload tasks from storage on storage event or custom event
   const reloadTasks = () => {
     try {
       const saved = localStorage.getItem(SCHEDULER_STORAGE_KEY);
@@ -181,6 +245,27 @@ export default function TodayScreen({
   const [showAllTasks, setShowAllTasks] = useState<boolean>(false);
   const MAX_PREVIEW_TASKS = 6;
 
+  // ── Yesterday's Carry-Over Tasks ──────────────────────────────────────────
+  const [dismissedRollover, setDismissedRollover] = useState<boolean>(false);
+  const yesterdayDate = useMemo(() => getYesterdayDateStr(selectedDate), [selectedDate]);
+  const yesterdayPendingTasks = useMemo(() => {
+    return allTasks.filter(
+      t => !t.isRecurrenceTemplate && t.date === yesterdayDate && !t.completed
+    );
+  }, [allTasks, yesterdayDate]);
+
+  const handleRolloverTasks = () => {
+    if (yesterdayPendingTasks.length === 0) return;
+    const updated = allTasks.map(t => {
+      if (!t.isRecurrenceTemplate && t.date === yesterdayDate && !t.completed) {
+        return { ...t, date: selectedDate };
+      }
+      return t;
+    });
+    saveTasksToStorage(updated);
+    setDismissedRollover(true);
+  };
+
   // ── Protein Tracking (shared with Scheduler) ──────────────────────────────
   const [nutritionTargets, setNutritionTargets] = useState<any>(() => {
     try {
@@ -197,7 +282,6 @@ export default function TodayScreen({
   const [editingProteinBlock, setEditingProteinBlock] = useState<TimeBlock | null>(null);
   const [proteinDraft, setProteinDraft] = useState('');
 
-  // Reload nutrition when Scheduler updates it
   useEffect(() => {
     const reload = () => {
       try {
@@ -214,6 +298,12 @@ export default function TodayScreen({
   const todaysFoods = useMemo(() => {
     return loggedFoods.filter((f: any) => f.date === selectedDate || !f.date);
   }, [loggedFoods, selectedDate]);
+
+  const totalProteinConsumed = useMemo(() => {
+    return todaysFoods.reduce((acc: number, f: any) => acc + (f.protein || 0), 0);
+  }, [todaysFoods]);
+
+  const totalProteinGoal = nutritionTargets?.protein || 150;
 
   const getBlockProtein = (block: TimeBlock) => ({
     consumed: Math.round(getBlockProteinConsumed(todaysFoods, block)),
@@ -236,6 +326,79 @@ export default function TodayScreen({
     } catch {}
     setEditingProteinBlock(null);
   };
+
+  // ── Favorite Proteins Quick Logging ──────────────────────────────────────
+  const [isProteinQuickLogOpen, setIsProteinQuickLogOpen] = useState(false);
+  const [favoriteProteins, setFavoriteProteins] = useState<FavoriteProteinItem[]>(() => getStoredFavoriteProteins());
+  const [customProteinAmount, setCustomProteinAmount] = useState('');
+  const [customProteinName, setCustomProteinName] = useState('');
+  const [selectedProteinBlock, setSelectedProteinBlock] = useState<TimeBlock>(currentActiveBlock);
+
+  useEffect(() => {
+    const handleFavs = () => setFavoriteProteins(getStoredFavoriteProteins());
+    window.addEventListener('focus_now_favorites_updated', handleFavs);
+    window.addEventListener('storage', handleFavs);
+    return () => {
+      window.removeEventListener('focus_now_favorites_updated', handleFavs);
+      window.removeEventListener('storage', handleFavs);
+    };
+  }, []);
+
+  const handleQuickLogProtein = (item: { name: string; protein: number; emoji?: string }, blockOverride?: TimeBlock) => {
+    const block = blockOverride || selectedProteinBlock || currentActiveBlock;
+    const newEntry = {
+      id: 'plog_' + Math.random().toString(36).substring(2, 9),
+      name: item.name,
+      protein: Math.round(item.protein * 10) / 10,
+      calories: 0,
+      mealType: block,
+      date: selectedDate,
+    };
+    const updated = [...loggedFoods, newEntry];
+    setLoggedFoods(updated);
+    try {
+      localStorage.setItem(LOGGED_FOODS_KEY, JSON.stringify(updated));
+      window.dispatchEvent(new CustomEvent('storage'));
+    } catch {}
+    setIsProteinQuickLogOpen(false);
+    setCustomProteinAmount('');
+    setCustomProteinName('');
+  };
+
+  // ── Daily Completion Score & Momentum ────────────────────────────────────
+  const dailyScore = useMemo(() => {
+    let score = 0;
+    let weights = 0;
+
+    // Tasks (50% weight if tasks exist)
+    if (totalTasksCount > 0) {
+      score += (completedTasksCount / totalTasksCount) * 50;
+      weights += 50;
+    }
+    // Protein (30% weight)
+    if (totalProteinGoal > 0) {
+      const protRatio = Math.min(1, totalProteinConsumed / totalProteinGoal);
+      score += protRatio * (totalTasksCount > 0 ? 30 : 60);
+      weights += (totalTasksCount > 0 ? 30 : 60);
+    }
+    // One Thing (20% weight)
+    if (oneThing && oneThing.trim().length > 0) {
+      score += (totalTasksCount > 0 ? 20 : 40);
+      weights += (totalTasksCount > 0 ? 20 : 40);
+    }
+
+    if (weights === 0) return 0;
+    return Math.min(100, Math.round(score));
+  }, [totalTasksCount, completedTasksCount, totalProteinConsumed, totalProteinGoal, oneThing]);
+
+  const dailyStatusMessage = useMemo(() => {
+    if (dailyScore === 0) return 'Ready to start';
+    if (dailyScore < 35) return 'Building momentum';
+    if (dailyScore < 70) return 'In the flow';
+    if (dailyScore < 100) return 'Solid day';
+    return 'Mastered today 🎯';
+  }, [dailyScore]);
+
 
   // Filtered tasks based on block filter
   const filteredTasks = useMemo(() => {
@@ -460,8 +623,8 @@ export default function TodayScreen({
   return (
     <div className="w-full max-w-2xl mx-auto px-4 sm:px-6 py-8 pb-28 font-sans text-slate-900 select-none">
       
-      {/* ── HEADER / GREETING ───────────────────────────────────────────── */}
-      <div className="mb-10 space-y-1">
+      {/* ── HEADER / GREETING & DAILY SCORE ─────────────────────────────── */}
+      <div className="mb-8 space-y-3">
         <div className="flex items-center justify-between">
           <div className="text-[11px] font-black uppercase tracking-widest text-emerald-600">
             Today
@@ -486,18 +649,66 @@ export default function TodayScreen({
           </div>
         </div>
 
-        <h1 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight pt-1">
-          {greeting}
-        </h1>
-        <p className="text-xs text-slate-400 font-medium">
-          Focus on what matters today.
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight">
+              {greeting}
+            </h1>
+            <p className="text-xs text-slate-400 font-medium pt-0.5">
+              Focus on what matters today.
+            </p>
+          </div>
+
+          {/* 1. Daily Score / Completion Ring */}
+          <div className="bg-white px-3.5 py-2.5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center gap-3 shrink-0">
+            <div className="relative w-10 h-10 flex items-center justify-center">
+              <svg className="w-10 h-10 -rotate-90" viewBox="0 0 36 36">
+                <path
+                  className="text-slate-100"
+                  strokeWidth="3.5"
+                  stroke="currentColor"
+                  fill="none"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                />
+                <path
+                  className="text-emerald-500 transition-all duration-500"
+                  strokeDasharray={`${dailyScore}, 100`}
+                  strokeLinecap="round"
+                  strokeWidth="3.5"
+                  stroke="currentColor"
+                  fill="none"
+                  d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                />
+              </svg>
+              <span className="absolute text-[11px] font-black font-mono text-slate-800">
+                {dailyScore}%
+              </span>
+            </div>
+            <div className="hidden sm:block">
+              <div className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-wider">
+                Daily Score
+              </div>
+              <div className="text-xs font-bold text-slate-800">
+                {dailyStatusMessage}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* ── ONE THING (#1 PRIORITY) ─────────────────────────────────────── */}
-      <div className="mb-10 space-y-2.5">
-        <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-          One Thing
+      {/* ── ONE THING (#1 PRIORITY) & STREAK ─────────────────────────────── */}
+      <div className="mb-6 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+            One Thing
+          </div>
+          {/* 3. Streak Indicator */}
+          {priorityStreak > 0 && (
+            <div className="flex items-center gap-1 text-[11px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200/60 shadow-xs">
+              <Flame className="w-3.5 h-3.5 fill-amber-500 text-amber-500" />
+              <span>{priorityStreak}d streak</span>
+            </div>
+          )}
         </div>
 
         {isEditingOneThing ? (
@@ -552,6 +763,96 @@ export default function TodayScreen({
         )}
       </div>
 
+      {/* ── 4. QUICK VITALS ROW (WATER & ENERGY) ─────────────────────────── */}
+      <div className="mb-8 grid grid-cols-2 gap-2.5">
+        {/* Water tracker */}
+        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/70 shadow-xs flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
+              <Droplets className="w-3 h-3 text-cyan-500" />
+              <span>Water</span>
+            </div>
+            <div className="text-xs sm:text-sm font-bold text-slate-800 truncate pt-0.5">
+              {vitals.water} <span className="text-xs text-slate-400 font-normal">({(vitals.water * 0.25).toFixed(1)}L)</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => updateVitals({ water: Math.max(0, vitals.water - 1) })}
+              className="w-6 h-6 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-600 font-black text-xs flex items-center justify-center transition cursor-pointer"
+              title="Minus 1 glass"
+            >
+              -
+            </button>
+            <button
+              type="button"
+              onClick={() => updateVitals({ water: vitals.water + 1 })}
+              className="w-6 h-6 rounded-lg bg-cyan-50 hover:bg-cyan-100 text-cyan-700 font-black text-xs flex items-center justify-center transition cursor-pointer"
+              title="Add 1 glass (250ml)"
+            >
+              +
+            </button>
+          </div>
+        </div>
+
+        {/* Protein Quick Log from Favorites */}
+        <div className="bg-white p-3.5 rounded-2xl border border-slate-200/70 shadow-xs flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1">
+              <Zap className="w-3 h-3 text-amber-500" />
+              <span>Protein</span>
+            </div>
+            <div className="text-xs sm:text-sm font-bold text-slate-800 truncate pt-0.5">
+              {totalProteinConsumed}g <span className="text-xs text-slate-400 font-normal">/ {totalProteinGoal}g</span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedProteinBlock(currentActiveBlock);
+              setIsProteinQuickLogOpen(true);
+            }}
+            className="px-2.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-black transition cursor-pointer flex items-center gap-1 shrink-0 border border-amber-200/60 shadow-xs active:scale-95"
+            title="Log protein from favorites"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Log</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── 5. YESTERDAY'S CARRY-OVER BANNER ──────────────────────────────── */}
+      {yesterdayPendingTasks.length > 0 && !dismissedRollover && (
+        <div className="mb-6 px-4 py-3 bg-amber-50/70 border border-amber-200/80 rounded-2xl flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <RotateCcw className="w-4 h-4 text-amber-600 shrink-0" />
+            <p className="text-xs font-bold text-amber-900 truncate">
+              {yesterdayPendingTasks.length} open task{yesterdayPendingTasks.length > 1 ? 's' : ''} from yesterday
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleRolloverTasks}
+              className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition cursor-pointer shadow-xs"
+            >
+              Rollover to Today
+            </button>
+            <button
+              type="button"
+              onClick={() => setDismissedRollover(true)}
+              className="p-1 text-amber-500 hover:text-amber-800 transition cursor-pointer"
+              title="Dismiss"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── TASKS SECTION ────────────────────────────────────────────────── */}
       <div className="mb-10 space-y-3">
         <div className="flex items-center justify-between">
@@ -565,7 +866,7 @@ export default function TodayScreen({
           )}
         </div>
 
-        {/* Time Block Step-wise Filter Bar */}
+        {/* Time Block Step-wise Filter Bar with 2. Active Block Focus */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 select-none">
           <button
             onClick={() => setSelectedBlockFilter('All')}
@@ -585,6 +886,8 @@ export default function TodayScreen({
           ].map(({ block, emoji, label }) => {
             const count = todayTasks.filter(t => t.timeBlock === block).length;
             const isActive = selectedBlockFilter === block;
+            const isCurrentTimeBlock = block === currentActiveBlock && selectedDate === dateToday;
+
             return (
               <button
                 key={block}
@@ -597,6 +900,9 @@ export default function TodayScreen({
               >
                 <span>{emoji}</span>
                 <span>{label}</span>
+                {isCurrentTimeBlock && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" title="Active block now" />
+                )}
                 {count > 0 && <span className="text-[10px] opacity-70">({count})</span>}
               </button>
             );
@@ -632,15 +938,21 @@ export default function TodayScreen({
               const { consumed, goal } = getBlockProtein(block);
               const proteinPct = goal > 0 ? Math.min(100, Math.round((consumed / goal) * 100)) : 0;
               const proteinDone = consumed >= goal;
+              const isCurrentBlock = block === currentActiveBlock && selectedDate === dateToday;
 
               return (
                 <div key={block} className="space-y-2">
                   {selectedBlockFilter === 'All' && (
                     <div className="flex items-center justify-between px-1 pt-1 gap-3">
-                      {/* Block label + task count */}
+                      {/* Block label + task count + Active Now badge */}
                       <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5 shrink-0">
                         <span>{emojiMap[block]}</span>
                         <span>{block}</span>
+                        {isCurrentBlock && (
+                          <span className="text-[9px] font-extrabold bg-emerald-100 text-emerald-700 px-1.5 py-0.2 rounded-md tracking-normal">
+                            NOW
+                          </span>
+                        )}
                         <span className="font-mono font-bold text-slate-300">
                           {blockTasks.filter(t => t.completed).length}/{blockTasks.length}
                         </span>
@@ -1166,6 +1478,156 @@ export default function TodayScreen({
           </div>
         </div>
       </div>
+
+      {/* ── FAVORITE PROTEINS QUICK LOG MODAL ────────────────────────────── */}
+      <AnimatePresence>
+        {isProteinQuickLogOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/40 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl border border-slate-200/80 space-y-4 max-h-[90vh] overflow-y-auto"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center text-amber-600">
+                    <Zap className="w-4 h-4 fill-amber-500 text-amber-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900">Quick Log Protein</h3>
+                    <p className="text-[11px] text-slate-400">Select a favorite or enter grams</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsProteinQuickLogOpen(false)}
+                  className="p-1.5 text-slate-400 hover:text-slate-700 rounded-xl hover:bg-slate-100 transition cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Time Block Selector */}
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block mb-1.5">
+                  Meal / Time Block
+                </label>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {(['Morning', 'Afternoon', 'Evening', 'Night'] as TimeBlock[]).map(b => {
+                    const icons: Record<TimeBlock, string> = { Morning: '☀️', Afternoon: '🌤️', Evening: '🌇', Night: '🌙' };
+                    const isSelected = selectedProteinBlock === b;
+                    return (
+                      <button
+                        key={b}
+                        type="button"
+                        onClick={() => setSelectedProteinBlock(b)}
+                        className={`py-2 px-1 rounded-xl text-xs font-bold transition cursor-pointer border flex flex-col items-center gap-0.5 ${
+                          isSelected
+                            ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span className="text-xs">{icons[b]}</span>
+                        <span className="text-[10px]">{b}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Favorite Proteins Grid */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                  Favorite Proteins
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-1">
+                  {favoriteProteins.map(fav => (
+                    <button
+                      key={fav.id}
+                      type="button"
+                      onClick={() => handleQuickLogProtein(fav, selectedProteinBlock)}
+                      className="p-2.5 rounded-2xl bg-white hover:bg-amber-50/50 border border-slate-200/80 hover:border-amber-300 transition text-left flex items-center justify-between gap-2 shadow-xs group cursor-pointer active:scale-98"
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-base shrink-0">{fav.emoji || '⚡'}</span>
+                        <span className="text-xs font-bold text-slate-800 truncate group-hover:text-amber-950">
+                          {fav.name}
+                        </span>
+                      </div>
+                      <span className="text-xs font-black font-mono text-amber-600 bg-amber-50 px-2 py-0.5 rounded-lg shrink-0 border border-amber-200/50">
+                        +{fav.protein}g
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quick Gram Pills */}
+              <div className="space-y-1.5 pt-1 border-t border-slate-100">
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                  Quick Amount
+                </label>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {[20, 25, 30, 40, 50].map(grams => (
+                    <button
+                      key={grams}
+                      type="button"
+                      onClick={() => handleQuickLogProtein({ name: `Quick Protein (${grams}g)`, protein: grams }, selectedProteinBlock)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-900 hover:text-white text-slate-700 text-xs font-mono font-bold transition cursor-pointer"
+                    >
+                      +{grams}g
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Custom Entry */}
+              <div className="pt-2 border-t border-slate-100 space-y-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="Custom name (e.g. Salmon)"
+                    value={customProteinName}
+                    onChange={e => setCustomProteinName(e.target.value)}
+                    className="flex-1 px-3 py-1.5 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-slate-800"
+                  />
+                  <input
+                    type="number"
+                    placeholder="Grams (e.g. 35)"
+                    value={customProteinAmount}
+                    onChange={e => setCustomProteinAmount(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && customProteinAmount) {
+                        handleQuickLogProtein({
+                          name: customProteinName.trim() || 'Custom Protein',
+                          protein: Number(customProteinAmount) || 0,
+                        }, selectedProteinBlock);
+                      }
+                    }}
+                    className="w-24 px-3 py-1.5 text-xs border border-slate-200 rounded-xl font-mono text-center focus:outline-none focus:ring-1 focus:ring-slate-800"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!customProteinAmount) return;
+                      handleQuickLogProtein({
+                        name: customProteinName.trim() || 'Custom Protein',
+                        protein: Number(customProteinAmount) || 0,
+                      }, selectedProteinBlock);
+                    }}
+                    className="px-3.5 py-1.5 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-slate-800 transition cursor-pointer"
+                  >
+                    Log
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </div>
   );

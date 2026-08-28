@@ -17,6 +17,7 @@ import { createPgPoolConfig } from './connection.ts';
 import { setActiveDialect } from './active-dialect.ts';
 
 export { usePostgres };
+export { getActiveDialect } from './active-dialect.ts';
 
 export type AppDb = BetterSQLite3Database<typeof sqliteSchema>;
 

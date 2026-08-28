@@ -26,7 +26,12 @@ export const createPool = () => {
 };
 
 function createSqliteDb(): AppDb {
-  const dataDir = path.join(process.cwd(), 'data');
+  // On Vercel/Lambda the cwd is read-only — use /tmp for SQLite
+  const isServerless = process.env.VERCEL === '1' || process.env.AWS_LAMBDA_FUNCTION_NAME;
+  const dataDir = isServerless
+    ? '/tmp/focus_data'
+    : path.join(process.cwd(), 'data');
+
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
@@ -39,15 +44,21 @@ function createSqliteDb(): AppDb {
 }
 
 async function createPostgresDb(): Promise<AppDb> {
-  if (
-    process.env.VERCEL === '1' &&
-    !process.env.SUPABASE_DB_PASSWORD &&
-    !process.env.DATABASE_URL &&
-    !process.env.SQL_HOST
-  ) {
-    throw new Error(
-      'DATABASE_URL or SUPABASE_DB_PASSWORD must be set in Vercel environment variables. SQLite is not supported on serverless deployments.'
-    );
+  const hasDbConfig = !!(
+    process.env.SUPABASE_DB_PASSWORD ||
+    process.env.DATABASE_URL ||
+    process.env.SQL_HOST
+  );
+
+  if (!hasDbConfig) {
+    if (process.env.VERCEL === '1') {
+      throw new Error(
+        'No database configured. Add a Neon PostgreSQL database via Vercel Dashboard → Storage → Create → Neon Postgres (free tier available).'
+      );
+    }
+    // On non-Vercel (Render etc.) fall back to SQLite
+    console.warn('⚡ No DATABASE_URL found. Falling back to SQLite.');
+    return createSqliteDb();
   }
 
   try {
@@ -63,17 +74,48 @@ async function createPostgresDb(): Promise<AppDb> {
   } catch (err: any) {
     console.error('⚠️ PostgreSQL connection failed:', err?.message || err);
     if (err?.code === '28P01') {
-      console.error(
-        'Supabase rejected the PostgreSQL password. In Render, use the Database Password from Supabase Project Settings > Database.'
-      );
+      console.error('Supabase rejected the PostgreSQL password. Check your DATABASE_URL.');
     }
     if (process.env.VERCEL === '1') {
-      throw err;
+      // Don't fall back to SQLite on Vercel — it won't work reliably
+      throw new Error(
+        `PostgreSQL connection failed: ${err?.message}. ` +
+        'Check your DATABASE_URL in Vercel Environment Variables.'
+      );
     }
-    console.warn('⚡ DATABASE_URL is invalid or unreachable. Fix the DATABASE_URL in Render dashboard.');
-    console.warn('⚡ Booting with local SQLite as a temporary fallback (data will not persist across deploys).');
+    console.warn('⚡ Falling back to SQLite (data will not persist on serverless platforms).');
     return createSqliteDb();
   }
 }
 
-export const db: AppDb = usePostgres ? await createPostgresDb() : createSqliteDb();
+// Lazy singleton — initialized on first call so boot errors are catchable per-request
+let _db: AppDb | null = null;
+let _dbInitError: Error | null = null;
+let _dbInitialized = false;
+
+export async function getDb(): Promise<AppDb> {
+  if (_dbInitialized) {
+    if (_dbInitError) throw _dbInitError;
+    return _db!;
+  }
+  _dbInitialized = true;
+  try {
+    _db = usePostgres ? await createPostgresDb() : createSqliteDb();
+    return _db;
+  } catch (err: any) {
+    _dbInitError = err;
+    throw err;
+  }
+}
+
+// Top-level await for non-Vercel environments (keeps Render working as before)
+// On Vercel, db init happens lazily on first request via getDb()
+export const db: AppDb = process.env.VERCEL !== '1'
+  ? (usePostgres ? await createPostgresDb() : createSqliteDb())
+  : new Proxy({} as AppDb, {
+      get: (_target, prop) => {
+        throw new Error(
+          `Database not initialized. Call getDb() first. (Vercel lazy-init mode) Tried to access: ${String(prop)}`
+        );
+      }
+    });

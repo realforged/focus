@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
 dotenv.config();
-import { db } from "../db/index.ts";
+import { getDb } from "../db/index.ts";
 import { users, habits, habitLogs, routines, routineLogs } from "../db/schema.ts";
 import { eq, and } from "drizzle-orm";
 
@@ -81,6 +81,22 @@ export function createApp() {
 
   const apiRouter = express.Router();
 
+  // Database middleware — resolves lazy db per-request so startup errors return clean 503
+  apiRouter.use(async (req: any, res, next) => {
+    try {
+      req.db = await getDb();
+      next();
+    } catch (err: any) {
+      console.error("Database initialization error:", err?.message || err);
+      res.status(503).json({
+        error: "Database not configured. " + (err?.message || ""),
+        hint: process.env.VERCEL === "1"
+          ? "Add a Neon PostgreSQL database: Vercel Dashboard → Storage → Create → Neon Postgres (free)"
+          : "Set DATABASE_URL in your environment variables.",
+      });
+    }
+  });
+
   // --- REST ENDPOINTS ---
 
   // 1. Authentication
@@ -96,7 +112,7 @@ export function createApp() {
       const emailLower = email.toLowerCase().trim();
       
       // Check if user already exists
-      const existingUser = await db.select().from(users).where(eq(users.email, emailLower));
+      const existingUser = await (req as any).db.select().from(users).where(eq(users.email, emailLower));
       if (existingUser.length > 0) {
         return res.status(400).json({ error: "A user with this email address already exists." });
       }
@@ -106,7 +122,7 @@ export function createApp() {
       const todayStr = new Date().toISOString().split('T')[0];
 
       // On onboarding/registration, we start the 90-day challenge and set day 1
-      const [newUser] = await db.insert(users)
+      const [newUser] = await (req as any).db.insert(users)
         .values({
           uid: customUid,
           email: emailLower,
@@ -128,7 +144,7 @@ export function createApp() {
       ];
 
       for (const h of initialSeedHabits) {
-        await db.insert(habits).values({
+        await (req as any).db.insert(habits).values({
           id: h.id,
           userId: customUid,
           name: h.name,
@@ -173,7 +189,7 @@ export function createApp() {
 
     try {
       const emailLower = email.toLowerCase().trim();
-      const existingUser = await db.select().from(users).where(eq(users.email, emailLower));
+      const existingUser = await (req as any).db.select().from(users).where(eq(users.email, emailLower));
       
       if (existingUser.length === 0) {
         return res.status(401).json({ error: "Invalid email or password." });
@@ -213,7 +229,7 @@ export function createApp() {
   // Get User Profile
   apiRouter.get("/user/me", authenticateToken as any, async (req: AuthRequest, res) => {
     try {
-      const existingUser = await db.select().from(users).where(eq(users.uid, req.user!.uid));
+      const existingUser = await (req as any).db.select().from(users).where(eq(users.uid, req.user!.uid));
       if (existingUser.length === 0) {
         return res.status(404).json({ error: "User profile not found." });
       }
@@ -237,7 +253,7 @@ export function createApp() {
   apiRouter.post("/user/sync-journey", authenticateToken as any, async (req: AuthRequest, res) => {
     const { journey_start_date, total_points, locked_in_days, consecutive_locked_in_streak } = req.body;
     try {
-      const existingUser = await db.select().from(users).where(eq(users.uid, req.user!.uid));
+      const existingUser = await (req as any).db.select().from(users).where(eq(users.uid, req.user!.uid));
       if (existingUser.length === 0) {
         return res.status(404).json({ error: "User session not found." });
       }
@@ -248,7 +264,7 @@ export function createApp() {
       if (locked_in_days !== undefined) updateData.lockedInDays = locked_in_days;
       if (consecutive_locked_in_streak !== undefined) updateData.consecutiveLockedInStreak = consecutive_locked_in_streak;
 
-      const [updatedUser] = await db.update(users)
+      const [updatedUser] = await (req as any).db.update(users)
         .set(updateData)
         .where(eq(users.uid, req.user!.uid))
         .returning();
@@ -274,12 +290,12 @@ export function createApp() {
       const uid = req.user!.uid;
       const todayStr = new Date().toISOString().split('T')[0];
 
-      await db.delete(habitLogs).where(eq(habitLogs.userId, uid));
-      await db.delete(routineLogs).where(eq(routineLogs.userId, uid));
-      await db.delete(habits).where(eq(habits.userId, uid));
-      await db.delete(routines).where(eq(routines.userId, uid));
+      await (req as any).db.delete(habitLogs).where(eq(habitLogs.userId, uid));
+      await (req as any).db.delete(routineLogs).where(eq(routineLogs.userId, uid));
+      await (req as any).db.delete(habits).where(eq(habits.userId, uid));
+      await (req as any).db.delete(routines).where(eq(routines.userId, uid));
 
-      await db.update(users)
+      await (req as any).db.update(users)
         .set({
           totalPoints: 0,
           lockedInDays: 0,
@@ -297,7 +313,7 @@ export function createApp() {
       ];
 
       for (const h of initialSeedHabits) {
-        await db.insert(habits).values({
+        await (req as any).db.insert(habits).values({
           id: h.id,
           userId: uid,
           name: h.name,
@@ -326,8 +342,8 @@ export function createApp() {
     try {
       const uid = req.user!.uid;
       const [userHabits, allLogs] = await Promise.all([
-        db.select().from(habits).where(eq(habits.userId, uid)),
-        db.select().from(habitLogs).where(eq(habitLogs.userId, uid)),
+        (req as any).db.select().from(habits).where(eq(habits.userId, uid)),
+        (req as any).db.select().from(habitLogs).where(eq(habitLogs.userId, uid)),
       ]);
 
       const logsByHabitId: Record<string, Record<string, number>> = {};
@@ -374,7 +390,7 @@ export function createApp() {
     const createdAtStr = new Date().toISOString().split("T")[0];
 
     try {
-      await db.insert(habits).values({
+      await (req as any).db.insert(habits).values({
         id: newId,
         userId: req.user!.uid,
         name,
@@ -425,7 +441,7 @@ export function createApp() {
     }
 
     try {
-      const existingLogs = await db.select().from(habitLogs).where(
+      const existingLogs = await (req as any).db.select().from(habitLogs).where(
         and(
           eq(habitLogs.userId, req.user!.uid),
           eq(habitLogs.habitId, id),
@@ -436,11 +452,11 @@ export function createApp() {
       let finalValue = parseFloat(value);
       if (existingLogs.length > 0) {
         finalValue += existingLogs[0].value;
-        await db.update(habitLogs)
+        await (req as any).db.update(habitLogs)
           .set({ value: finalValue })
           .where(eq(habitLogs.id, existingLogs[0].id));
       } else {
-        await db.insert(habitLogs).values({
+        await (req as any).db.insert(habitLogs).values({
           habitId: id,
           userId: req.user!.uid,
           date,
@@ -465,7 +481,7 @@ export function createApp() {
     }
 
     try {
-      const existingLogs = await db.select().from(habitLogs).where(
+      const existingLogs = await (req as any).db.select().from(habitLogs).where(
         and(
           eq(habitLogs.userId, req.user!.uid),
           eq(habitLogs.habitId, id),
@@ -475,11 +491,11 @@ export function createApp() {
 
       const finalValue = parseFloat(value);
       if (existingLogs.length > 0) {
-        await db.update(habitLogs)
+        await (req as any).db.update(habitLogs)
           .set({ value: finalValue })
           .where(eq(habitLogs.id, existingLogs[0].id));
       } else {
-        await db.insert(habitLogs).values({
+        await (req as any).db.insert(habitLogs).values({
           habitId: id,
           userId: req.user!.uid,
           date,
@@ -500,20 +516,20 @@ export function createApp() {
       const habitIdToDelete = req.params.id;
       const uid = req.user!.uid;
 
-      await db.delete(habits).where(
+      await (req as any).db.delete(habits).where(
         and(
           eq(habits.id, habitIdToDelete),
           eq(habits.userId, uid)
         )
       );
 
-      const userRoutines = await db.select().from(routines).where(eq(routines.userId, uid));
+      const userRoutines = await (req as any).db.select().from(routines).where(eq(routines.userId, uid));
       for (const rt of userRoutines) {
         if (rt.habitIds) {
           try {
             const hIds = JSON.parse(rt.habitIds);
             if (Array.isArray(hIds) && hIds.includes(habitIdToDelete)) {
-              await db.update(routines)
+              await (req as any).db.update(routines)
                 .set({ habitIds: JSON.stringify(hIds.filter((id: string) => id !== habitIdToDelete)) })
                 .where(eq(routines.id, rt.id));
             }
@@ -537,8 +553,8 @@ export function createApp() {
     try {
       const uid = req.user!.uid;
       const [userRoutines, allLogs] = await Promise.all([
-        db.select().from(routines).where(eq(routines.userId, uid)),
-        db.select().from(routineLogs).where(eq(routineLogs.userId, uid)),
+        (req as any).db.select().from(routines).where(eq(routines.userId, uid)),
+        (req as any).db.select().from(routineLogs).where(eq(routineLogs.userId, uid)),
       ]);
 
       const logsByRoutineId: Record<string, Record<string, boolean>> = {};
@@ -578,7 +594,7 @@ export function createApp() {
     const uid = req.user!.uid;
 
     try {
-      await db.insert(routines).values({
+      await (req as any).db.insert(routines).values({
         id: newId,
         userId: uid,
         name,
@@ -590,7 +606,7 @@ export function createApp() {
       });
 
       for (const hId of habitIds) {
-        await db.update(habits)
+        await (req as any).db.update(habits)
           .set({ routineId: newId })
           .where(
             and(
@@ -625,7 +641,7 @@ export function createApp() {
     }
 
     try {
-      const existingLogs = await db.select().from(routineLogs).where(
+      const existingLogs = await (req as any).db.select().from(routineLogs).where(
         and(
           eq(routineLogs.userId, req.user!.uid),
           eq(routineLogs.routineId, id),
@@ -635,11 +651,11 @@ export function createApp() {
 
       const statusVal = !!completed;
       if (existingLogs.length > 0) {
-        await db.update(routineLogs)
+        await (req as any).db.update(routineLogs)
           .set({ completed: statusVal })
           .where(eq(routineLogs.id, existingLogs[0].id));
       } else {
-        await db.insert(routineLogs).values({
+        await (req as any).db.insert(routineLogs).values({
           routineId: id,
           userId: req.user!.uid,
           date,
@@ -660,7 +676,7 @@ export function createApp() {
     const uid = req.user!.uid;
 
     try {
-      const existing = await db.select().from(routines).where(
+      const existing = await (req as any).db.select().from(routines).where(
         and(
           eq(routines.id, id),
           eq(routines.userId, uid)
@@ -683,7 +699,7 @@ export function createApp() {
         const oldHabitIds = existing[0].habitIds ? JSON.parse(existing[0].habitIds) : [];
         for (const oldId of oldHabitIds) {
           if (!habitIds.includes(oldId)) {
-            await db.update(habits)
+            await (req as any).db.update(habits)
               .set({ routineId: null })
               .where(
                 and(
@@ -695,7 +711,7 @@ export function createApp() {
         }
 
         for (const newId of habitIds) {
-          await db.update(habits)
+          await (req as any).db.update(habits)
             .set({ routineId: id })
             .where(
               and(
@@ -706,7 +722,7 @@ export function createApp() {
         }
       }
 
-      const [updatedRt] = await db.update(routines)
+      const [updatedRt] = await (req as any).db.update(routines)
         .set(updateData)
         .where(eq(routines.id, id))
         .returning();
@@ -731,7 +747,7 @@ export function createApp() {
       const routineIdToDelete = req.params.id;
       const uid = req.user!.uid;
 
-      await db.update(habits)
+      await (req as any).db.update(habits)
         .set({ routineId: null })
         .where(
           and(
@@ -740,7 +756,7 @@ export function createApp() {
           )
         );
 
-      await db.delete(routines).where(
+      await (req as any).db.delete(routines).where(
         and(
           eq(routines.id, routineIdToDelete),
           eq(routines.userId, uid)

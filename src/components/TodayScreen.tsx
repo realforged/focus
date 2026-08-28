@@ -12,20 +12,21 @@ import {
   ChevronRight,
   ChevronDown,
   ChevronUp,
-  GripVertical,
   X,
   BookOpen,
   Target,
-  Folder,
-  FolderPlus,
-  ListChecks,
+  Zap,
 } from 'lucide-react';
 import { formatDateString, dateToday } from '../data';
 import { getDailyPriority, saveDailyPriority, getTomorrowDateStr } from '../lib/journal';
 import type { TimeBlock } from '../lib/nutritionBlocks';
+import { getBlockProteinConsumed, getBlockProteinGoal, normalizeMealTypeToBlock } from '../lib/nutritionBlocks';
 
 // Shared Scheduler tasks storage key to stay 100% unified with DailyScheduler
 const SCHEDULER_STORAGE_KEY = 'focus_now_daily_scheduler_tasks_v10';
+const NUTRITION_TARGETS_KEY = 'focus_now_scheduler_protein_targets_v1';
+const LOGGED_FOODS_KEY = '90day_logged_foods';
+
 
 export interface SubTask {
   id: string;
@@ -178,13 +179,67 @@ export default function TodayScreen({
   // ── Step-wise Time Blocks & Limit Options ─────────────────────────────────
   const [selectedBlockFilter, setSelectedBlockFilter] = useState<'All' | TimeBlock>('All');
   const [showAllTasks, setShowAllTasks] = useState<boolean>(false);
-  const MAX_PREVIEW_TASKS = 6; // Show top 6 tasks in compact view
+  const MAX_PREVIEW_TASKS = 6;
+
+  // ── Protein Tracking (shared with Scheduler) ──────────────────────────────
+  const [nutritionTargets, setNutritionTargets] = useState<any>(() => {
+    try {
+      const t = localStorage.getItem(NUTRITION_TARGETS_KEY);
+      return t ? JSON.parse(t) : { protein: 150 };
+    } catch { return { protein: 150 }; }
+  });
+  const [loggedFoods, setLoggedFoods] = useState<any[]>(() => {
+    try {
+      const f = localStorage.getItem(LOGGED_FOODS_KEY);
+      return f ? JSON.parse(f) : [];
+    } catch { return []; }
+  });
+  const [editingProteinBlock, setEditingProteinBlock] = useState<TimeBlock | null>(null);
+  const [proteinDraft, setProteinDraft] = useState('');
+
+  // Reload nutrition when Scheduler updates it
+  useEffect(() => {
+    const reload = () => {
+      try {
+        const t = localStorage.getItem(NUTRITION_TARGETS_KEY);
+        if (t) setNutritionTargets(JSON.parse(t));
+        const f = localStorage.getItem(LOGGED_FOODS_KEY);
+        if (f) setLoggedFoods(JSON.parse(f));
+      } catch {}
+    };
+    window.addEventListener('storage', reload);
+    return () => window.removeEventListener('storage', reload);
+  }, []);
+
+  const todaysFoods = useMemo(() => {
+    return loggedFoods.filter((f: any) => f.date === selectedDate || !f.date);
+  }, [loggedFoods, selectedDate]);
+
+  const getBlockProtein = (block: TimeBlock) => ({
+    consumed: Math.round(getBlockProteinConsumed(todaysFoods, block)),
+    goal: getBlockProteinGoal(block, nutritionTargets),
+  });
+
+  const saveProteinGoal = (block: TimeBlock, value: string) => {
+    const num = parseInt(value, 10);
+    if (isNaN(num) || num < 0) return;
+    const keyMap: Record<TimeBlock, string> = {
+      Morning: 'morningProtein',
+      Afternoon: 'afternoonProtein',
+      Evening: 'eveningProtein',
+      Night: 'nightProtein',
+    };
+    const updated = { ...nutritionTargets, [keyMap[block]]: num };
+    setNutritionTargets(updated);
+    try {
+      localStorage.setItem(NUTRITION_TARGETS_KEY, JSON.stringify(updated));
+    } catch {}
+    setEditingProteinBlock(null);
+  };
 
   // Filtered tasks based on block filter
   const filteredTasks = useMemo(() => {
-    if (selectedBlockFilter === 'All') {
-      return todayTasks;
-    }
+    if (selectedBlockFilter === 'All') return todayTasks;
     return todayTasks.filter(t => t.timeBlock === selectedBlockFilter);
   }, [todayTasks, selectedBlockFilter]);
 
@@ -227,7 +282,7 @@ export default function TodayScreen({
   const toggleExpandGroup = (taskId: string) => {
     setExpandedGroupIds(prev => ({
       ...prev,
-      [taskId]: prev[taskId] === undefined ? false : !prev[taskId],
+      [taskId]: !prev[taskId],
     }));
   };
 
@@ -574,17 +629,64 @@ export default function TodayScreen({
                 Night: '🌙',
               };
 
+              const { consumed, goal } = getBlockProtein(block);
+              const proteinPct = goal > 0 ? Math.min(100, Math.round((consumed / goal) * 100)) : 0;
+              const proteinDone = consumed >= goal;
+
               return (
                 <div key={block} className="space-y-2">
                   {selectedBlockFilter === 'All' && (
-                    <div className="flex items-center justify-between px-1 pt-1">
-                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                        <span>{emojiMap[block] || '⏰'}</span>
+                    <div className="flex items-center justify-between px-1 pt-1 gap-3">
+                      {/* Block label + task count */}
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5 shrink-0">
+                        <span>{emojiMap[block]}</span>
                         <span>{block}</span>
+                        <span className="font-mono font-bold text-slate-300">
+                          {blockTasks.filter(t => t.completed).length}/{blockTasks.length}
+                        </span>
                       </span>
-                      <span className="text-[10px] font-bold text-slate-400 font-mono">
-                        {blockTasks.filter(t => t.completed).length}/{blockTasks.length}
-                      </span>
+
+                      {/* Protein mini bar */}
+                      <div className="flex items-center gap-2 flex-1 justify-end">
+                        {editingProteinBlock === block ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              autoFocus
+                              value={proteinDraft}
+                              onChange={e => setProteinDraft(e.target.value)}
+                              onKeyDown={e => {
+                                if (e.key === 'Enter') saveProteinGoal(block, proteinDraft);
+                                if (e.key === 'Escape') setEditingProteinBlock(null);
+                              }}
+                              onBlur={() => saveProteinGoal(block, proteinDraft)}
+                              className="w-12 px-1.5 py-0.5 text-[11px] font-mono font-bold border border-slate-300 rounded-lg text-center focus:outline-none"
+                              placeholder={String(goal)}
+                            />
+                            <span className="text-[10px] text-slate-400">g</span>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => { setEditingProteinBlock(block); setProteinDraft(String(goal)); }}
+                            className="flex items-center gap-1.5 group/prot cursor-pointer"
+                            title={`Protein: ${consumed}g / ${goal}g — tap to edit goal`}
+                          >
+                            <Zap className="w-3 h-3 text-slate-300 group-hover/prot:text-amber-500 transition" />
+                            <div className="flex items-center gap-1">
+                              <div className="w-14 h-1 bg-slate-100 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full transition-all ${proteinDone ? 'bg-emerald-400' : 'bg-amber-400'}`}
+                                  style={{ width: `${proteinPct}%` }}
+                                />
+                              </div>
+                              <span className={`text-[10px] font-mono font-bold ${proteinDone ? 'text-emerald-500' : 'text-slate-400'}`}>
+                                {consumed}<span className="text-slate-300 font-normal">/{goal}g</span>
+                              </span>
+                            </div>
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -596,7 +698,7 @@ export default function TodayScreen({
                       const completedSubsCount = subtasks.filter(s => s.completed).length;
                       const isGroupAllDone = subtasks.length > 0 ? completedSubsCount === subtasks.length : task.completed;
                       const groupPct = subtasks.length > 0 ? Math.round((completedSubsCount / subtasks.length) * 100) : (task.completed ? 100 : 0);
-                      const isExpanded = expandedGroupIds[task.id] !== false; // default expanded
+                      const isExpanded = Boolean(expandedGroupIds[task.id]); // default closed on initial load
 
                       if (isEditing) {
                         return (
@@ -652,60 +754,38 @@ export default function TodayScreen({
                         return (
                           <div
                             key={task.id}
-                            className={`group bg-white rounded-2xl border transition-all overflow-hidden ${
-                              isGroupAllDone
-                                ? 'border-slate-200/80 bg-slate-50/40 opacity-80'
-                                : 'border-slate-200/90 shadow-xs hover:border-slate-300'
-                            }`}
+                            className="bg-white rounded-2xl border border-slate-200/70 hover:border-slate-300 transition overflow-hidden shadow-xs"
                           >
-                            {/* Group Header Row */}
-                            <div className="p-3.5 sm:p-4 flex items-center justify-between gap-3">
-                              <div
-                                onClick={() => handleToggleGroup(task.id)}
-                                className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer select-none"
-                              >
-                                {/* Master Checkbox */}
+                            {/* Header: same compact size as standard task */}
+                            <div className="px-4 py-3 flex items-center justify-between gap-3 select-none">
+                              <div className="flex items-center gap-3 min-w-0 flex-1">
+                                {/* Circle Checkbox */}
                                 <div
-                                  className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition shrink-0 ${
+                                  onClick={() => handleToggleGroup(task.id)}
+                                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition shrink-0 cursor-pointer ${
                                     isGroupAllDone
-                                      ? 'bg-slate-900 border-slate-900 text-white'
-                                      : 'border-slate-300 hover:border-slate-800 bg-white'
+                                      ? 'bg-emerald-500 border-emerald-500 text-white'
+                                      : 'border-slate-300 hover:border-emerald-400 bg-white'
                                   }`}
                                 >
-                                  {isGroupAllDone && <Check className="w-3.5 h-3.5 stroke-[3px]" />}
+                                  {isGroupAllDone && <Check className="w-3 h-3 stroke-[3px]" />}
                                 </div>
 
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-xs shrink-0">📁</span>
-                                    <span
-                                      className={`text-xs sm:text-sm font-black truncate ${
-                                        isGroupAllDone ? 'line-through text-slate-400 font-bold' : 'text-slate-900'
-                                      }`}
-                                    >
-                                      {task.title}
-                                    </span>
-                                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 shrink-0">
-                                      Routine ({completedSubsCount}/{subtasks.length})
-                                    </span>
-                                  </div>
-
-                                  {/* Progress bar */}
-                                  {subtasks.length > 0 && (
-                                    <div className="flex items-center gap-2 mt-1.5 max-w-xs">
-                                      <div className="flex-1 bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                                        <div
-                                          className={`h-full rounded-full transition-all duration-300 ${
-                                            isGroupAllDone ? 'bg-emerald-500' : 'bg-slate-800'
-                                          }`}
-                                          style={{ width: `${groupPct}%` }}
-                                        />
-                                      </div>
-                                      <span className="text-[10px] font-mono font-bold text-slate-400">
-                                        {groupPct}%
-                                      </span>
-                                    </div>
-                                  )}
+                                <div
+                                  onClick={() => toggleExpandGroup(task.id)}
+                                  className="min-w-0 flex-1 flex items-center gap-2 cursor-pointer"
+                                >
+                                  <span
+                                    className={`text-xs sm:text-sm font-bold block truncate ${
+                                      isGroupAllDone ? 'line-through text-slate-400 font-medium' : 'text-slate-800'
+                                    }`}
+                                  >
+                                    {task.title}
+                                  </span>
+                                  {/* Minimalistic step badge: "· 2/4" */}
+                                  <span className="text-[10px] font-mono text-slate-400 shrink-0">
+                                    · {completedSubsCount}/{subtasks.length}
+                                  </span>
                                 </div>
 
                                 {task.scheduledTime && (
@@ -723,7 +803,7 @@ export default function TodayScreen({
                                   className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition cursor-pointer"
                                   title={isExpanded ? 'Collapse steps' : 'Expand steps'}
                                 >
-                                  {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                  {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                                 </button>
                                 <button
                                   onClick={() => {
@@ -748,29 +828,29 @@ export default function TodayScreen({
                             </div>
 
                             {/* Subtask Steps List */}
-                            {isExpanded && (
-                              <div className="px-4 pb-3.5 pt-1 border-t border-slate-100 bg-slate-50/50 space-y-1.5">
+                            {isExpanded && subtasks.length > 0 && (
+                              <div className="px-4 pb-2.5 pt-1 border-t border-slate-100/80 bg-slate-50/40 space-y-1">
                                 {subtasks.map(sub => (
                                   <div
                                     key={sub.id}
-                                    className="flex items-center justify-between gap-2.5 py-1.5 px-2.5 rounded-xl hover:bg-white transition group/sub"
+                                    className="flex items-center justify-between gap-2.5 py-1 px-2 rounded-lg hover:bg-white transition group/sub"
                                   >
                                     <div
                                       onClick={() => handleToggleSubtask(task.id, sub.id)}
                                       className="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer"
                                     >
                                       <div
-                                        className={`w-4 h-4 rounded-full border flex items-center justify-center transition shrink-0 ${
+                                        className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center transition shrink-0 ${
                                           sub.completed
                                             ? 'bg-emerald-500 border-emerald-500 text-white'
                                             : 'border-slate-300 bg-white hover:border-emerald-400'
                                         }`}
                                       >
-                                        {sub.completed && <Check className="w-2.5 h-2.5 stroke-[3px]" />}
+                                        {sub.completed && <Check className="w-2 h-2 stroke-[3px]" />}
                                       </div>
                                       <span
-                                        className={`text-xs font-bold truncate ${
-                                          sub.completed ? 'line-through text-slate-400 font-medium' : 'text-slate-700'
+                                        className={`text-xs truncate ${
+                                          sub.completed ? 'line-through text-slate-400' : 'text-slate-700 font-medium'
                                         }`}
                                       >
                                         {sub.title}
@@ -780,7 +860,7 @@ export default function TodayScreen({
                                     <button
                                       type="button"
                                       onClick={() => handleDeleteSubtask(task.id, sub.id)}
-                                      className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover/sub:opacity-100 transition"
+                                      className="p-0.5 text-slate-300 hover:text-red-500 opacity-0 group-hover/sub:opacity-100 transition"
                                       title="Remove step"
                                     >
                                       <X className="w-3 h-3" />
@@ -789,10 +869,10 @@ export default function TodayScreen({
                                 ))}
 
                                 {/* Quick inline add step */}
-                                <div className="pt-1 flex items-center gap-2">
+                                <div className="pt-1 flex items-center gap-1.5">
                                   <input
                                     type="text"
-                                    placeholder="+ Add a step to this routine..."
+                                    placeholder="+ Add step..."
                                     value={inlineNewStepText[task.id] || ''}
                                     onChange={e =>
                                       setInlineNewStepText(prev => ({ ...prev, [task.id]: e.target.value }))
@@ -800,12 +880,12 @@ export default function TodayScreen({
                                     onKeyDown={e => {
                                       if (e.key === 'Enter') handleAddSubtaskToGroup(task.id);
                                     }}
-                                    className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-1 focus:ring-slate-800"
+                                    className="w-full px-2.5 py-1 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-800"
                                   />
                                   <button
                                     type="button"
                                     onClick={() => handleAddSubtaskToGroup(task.id)}
-                                    className="px-3 py-1.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-slate-800 shrink-0"
+                                    className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-bold hover:bg-slate-800 shrink-0"
                                   >
                                     Add
                                   </button>

@@ -159,6 +159,27 @@ export default function TodayScreen({
   const completedTasksCount = todayTasks.filter(t => t.completed).length;
   const totalTasksCount = todayTasks.length;
 
+  // ── Step-wise Time Blocks & Limit Options ─────────────────────────────────
+  const [selectedBlockFilter, setSelectedBlockFilter] = useState<'All' | TimeBlock>('All');
+  const [showAllTasks, setShowAllTasks] = useState<boolean>(false);
+  const MAX_PREVIEW_TASKS = 6; // Show top 6 tasks in compact view
+
+  // Filtered tasks based on block filter
+  const filteredTasks = useMemo(() => {
+    if (selectedBlockFilter === 'All') {
+      return todayTasks;
+    }
+    return todayTasks.filter(t => t.timeBlock === selectedBlockFilter);
+  }, [todayTasks, selectedBlockFilter]);
+
+  // Sliced tasks if limiting to top 6-8 tasks
+  const displayedTasks = useMemo(() => {
+    if (showAllTasks || selectedBlockFilter !== 'All' || filteredTasks.length <= MAX_PREVIEW_TASKS) {
+      return filteredTasks;
+    }
+    return filteredTasks.slice(0, MAX_PREVIEW_TASKS);
+  }, [filteredTasks, showAllTasks, selectedBlockFilter]);
+
   // ── UP NEXT Item ─────────────────────────────────────────────────────────
   // Find the earliest upcoming scheduled item for today that has not been completed
   const upNextTask = useMemo(() => {
@@ -175,10 +196,12 @@ export default function TodayScreen({
   const [isAddingTask, setIsAddingTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskTime, setNewTaskTime] = useState('');
+  const [newTaskBlock, setNewTaskBlock] = useState<TimeBlock>('Morning');
 
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editTaskTitle, setEditTaskTitle] = useState('');
   const [editTaskTime, setEditTaskTime] = useState('');
+  const [editTaskBlock, setEditTaskBlock] = useState<TimeBlock>('Morning');
 
   const handleToggleTask = (taskId: string) => {
     const updated = allTasks.map(t => (t.id === taskId ? { ...t, completed: !t.completed } : t));
@@ -189,12 +212,15 @@ export default function TodayScreen({
     e.preventDefault();
     if (!newTaskTitle.trim()) return;
 
-    // Determine default timeBlock based on time or current hour
-    let timeBlock: TimeBlock = 'Morning';
-    const hour = new Date().getHours();
-    if (hour >= 12 && hour < 17) timeBlock = 'Afternoon';
-    else if (hour >= 17 && hour < 21) timeBlock = 'Evening';
-    else if (hour >= 21) timeBlock = 'Night';
+    // Use user-selected block or fallback based on current hour
+    let timeBlock: TimeBlock = newTaskBlock;
+    if (!newTaskBlock) {
+      const hour = new Date().getHours();
+      if (hour >= 12 && hour < 17) timeBlock = 'Afternoon';
+      else if (hour >= 17 && hour < 21) timeBlock = 'Evening';
+      else if (hour >= 21) timeBlock = 'Night';
+      else timeBlock = 'Morning';
+    }
 
     const newTask: TodayTask = {
       id: 'task_' + Math.random().toString(36).substring(2, 9),
@@ -219,6 +245,7 @@ export default function TodayScreen({
         ? {
             ...t,
             title: editTaskTitle.trim(),
+            timeBlock: editTaskBlock,
             scheduledTime: editTaskTime.trim() || undefined,
           }
         : t
@@ -356,11 +383,11 @@ export default function TodayScreen({
         )}
       </div>
 
-      {/* ── TASKS ────────────────────────────────────────────────────────── */}
+      {/* ── TASKS SECTION ────────────────────────────────────────────────── */}
       <div className="mb-10 space-y-3">
         <div className="flex items-center justify-between">
           <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-            Tasks
+            Tasks · Steps by Time
           </div>
           {totalTasksCount > 0 && (
             <span className="text-[11px] font-bold text-slate-400 font-mono">
@@ -369,114 +396,201 @@ export default function TodayScreen({
           )}
         </div>
 
+        {/* Time Block Step-wise Filter Bar */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 select-none">
+          <button
+            onClick={() => setSelectedBlockFilter('All')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-black transition cursor-pointer border shrink-0 ${
+              selectedBlockFilter === 'All'
+                ? 'bg-slate-900 text-white border-slate-900 shadow-xs'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            All ({totalTasksCount})
+          </button>
+          {[
+            { block: 'Morning' as TimeBlock, emoji: '☀️', label: 'Morning' },
+            { block: 'Afternoon' as TimeBlock, emoji: '🌤️', label: 'Afternoon' },
+            { block: 'Evening' as TimeBlock, emoji: '🌇', label: 'Evening' },
+            { block: 'Night' as TimeBlock, emoji: '🌙', label: 'Night' },
+          ].map(({ block, emoji, label }) => {
+            const count = todayTasks.filter(t => t.timeBlock === block).length;
+            const isActive = selectedBlockFilter === block;
+            return (
+              <button
+                key={block}
+                onClick={() => setSelectedBlockFilter(block)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer border flex items-center gap-1.5 shrink-0 ${
+                  isActive
+                    ? 'bg-slate-900 text-white border-slate-900 shadow-xs font-black'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span>{emoji}</span>
+                <span>{label}</span>
+                {count > 0 && <span className="text-[10px] opacity-70">({count})</span>}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Task List */}
-        <div className="space-y-2">
-          {todayTasks.length === 0 && !isAddingTask ? (
+        <div className="space-y-4">
+          {displayedTasks.length === 0 && !isAddingTask ? (
             <div className="p-6 text-center bg-white rounded-2xl border border-dashed border-slate-200">
-              <p className="text-xs text-slate-400 font-medium">No tasks added for today yet.</p>
+              <p className="text-xs text-slate-400 font-medium">
+                {selectedBlockFilter === 'All'
+                  ? 'No tasks added for today yet.'
+                  : `No tasks in ${selectedBlockFilter} block.`}
+              </p>
             </div>
           ) : (
-            todayTasks.map(task => {
-              const isEditing = editingTaskId === task.id;
+            // Group step-wise by time block if in 'All' view, otherwise flat for selected block
+            (selectedBlockFilter === 'All'
+              ? ['Morning', 'Afternoon', 'Evening', 'Night'] as TimeBlock[]
+              : [selectedBlockFilter]
+            ).map(block => {
+              const blockTasks = displayedTasks.filter(t => t.timeBlock === block);
+              if (blockTasks.length === 0) return null;
 
-              if (isEditing) {
-                return (
-                  <div
-                    key={task.id}
-                    className="p-3.5 bg-white rounded-2xl border-2 border-emerald-500 space-y-2"
-                  >
-                    <input
-                      type="text"
-                      value={editTaskTitle}
-                      onChange={e => setEditTaskTitle(e.target.value)}
-                      className="w-full px-3 py-1.5 text-xs font-bold border border-slate-200 rounded-xl focus:outline-none"
-                      autoFocus
-                    />
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        placeholder="Time (e.g. 7:00 PM)"
-                        value={editTaskTime}
-                        onChange={e => setEditTaskTime(e.target.value)}
-                        className="px-3 py-1.5 text-xs border border-slate-200 rounded-xl w-36"
-                      />
-                      <div className="flex-1" />
-                      <button
-                        onClick={() => setEditingTaskId(null)}
-                        className="px-3 py-1 text-xs text-slate-500"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={() => handleSaveEditTask(task.id)}
-                        className="px-3.5 py-1 text-xs font-black bg-slate-900 text-white rounded-xl"
-                      >
-                        Save
-                      </button>
-                    </div>
-                  </div>
-                );
-              }
+              const emojiMap: Record<string, string> = {
+                Morning: '☀️',
+                Afternoon: '🌤️',
+                Evening: '🌇',
+                Night: '🌙',
+              };
 
               return (
-                <div
-                  key={task.id}
-                  className="group px-4 py-3 bg-white rounded-2xl border border-slate-200/70 hover:border-slate-300 transition flex items-center justify-between gap-3"
-                >
-                  <div
-                    onClick={() => handleToggleTask(task.id)}
-                    className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
-                  >
-                    {/* Circle Checkbox */}
-                    <div
-                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition shrink-0 ${
-                        task.completed
-                          ? 'bg-emerald-500 border-emerald-500 text-white'
-                          : 'border-slate-300 hover:border-emerald-400 bg-white'
-                      }`}
-                    >
-                      {task.completed && <Check className="w-3 h-3 stroke-[3px]" />}
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <span
-                        className={`text-xs sm:text-sm font-bold block truncate ${
-                          task.completed
-                            ? 'line-through text-slate-400 font-medium'
-                            : 'text-slate-800'
-                        }`}
-                      >
-                        {task.title}
+                <div key={block} className="space-y-2">
+                  {selectedBlockFilter === 'All' && (
+                    <div className="flex items-center justify-between px-1 pt-1">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                        <span>{emojiMap[block] || '⏰'}</span>
+                        <span>{block}</span>
+                      </span>
+                      <span className="text-[10px] font-bold text-slate-400 font-mono">
+                        {blockTasks.filter(t => t.completed).length}/{blockTasks.length}
                       </span>
                     </div>
+                  )}
 
-                    {task.scheduledTime && (
-                      <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md shrink-0">
-                        {task.scheduledTime}
-                      </span>
-                    )}
-                  </div>
+                  <div className="space-y-2">
+                    {blockTasks.map(task => {
+                      const isEditing = editingTaskId === task.id;
 
-                  {/* Quick actions (visible on hover) */}
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
-                    <button
-                      onClick={() => {
-                        setEditingTaskId(task.id);
-                        setEditTaskTitle(task.title);
-                        setEditTaskTime(task.scheduledTime || '');
-                      }}
-                      className="p-1 text-slate-400 hover:text-slate-700"
-                      title="Edit"
-                    >
-                      <Pencil className="w-3 h-3" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteTask(task.id)}
-                      className="p-1 text-slate-400 hover:text-red-500"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                      if (isEditing) {
+                        return (
+                          <div
+                            key={task.id}
+                            className="p-3.5 bg-white rounded-2xl border-2 border-emerald-500 space-y-2"
+                          >
+                            <input
+                              type="text"
+                              value={editTaskTitle}
+                              onChange={e => setEditTaskTitle(e.target.value)}
+                              className="w-full px-3 py-1.5 text-xs font-bold border border-slate-200 rounded-xl focus:outline-none"
+                              autoFocus
+                            />
+                            <div className="flex flex-wrap items-center gap-2">
+                              <select
+                                value={editTaskBlock}
+                                onChange={e => setEditTaskBlock(e.target.value as TimeBlock)}
+                                className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-xl bg-white"
+                              >
+                                <option value="Morning">☀️ Morning</option>
+                                <option value="Afternoon">🌤️ Afternoon</option>
+                                <option value="Evening">🌇 Evening</option>
+                                <option value="Night">🌙 Night</option>
+                              </select>
+                              <input
+                                type="text"
+                                placeholder="Time (e.g. 7:00 PM)"
+                                value={editTaskTime}
+                                onChange={e => setEditTaskTime(e.target.value)}
+                                className="px-3 py-1.5 text-xs border border-slate-200 rounded-xl w-32"
+                              />
+                              <div className="flex-1" />
+                              <button
+                                onClick={() => setEditingTaskId(null)}
+                                className="px-3 py-1 text-xs text-slate-500"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => handleSaveEditTask(task.id)}
+                                className="px-3.5 py-1 text-xs font-black bg-slate-900 text-white rounded-xl"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div
+                          key={task.id}
+                          className="group px-4 py-3 bg-white rounded-2xl border border-slate-200/70 hover:border-slate-300 transition flex items-center justify-between gap-3"
+                        >
+                          <div
+                            onClick={() => handleToggleTask(task.id)}
+                            className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
+                          >
+                            {/* Circle Checkbox */}
+                            <div
+                              className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition shrink-0 ${
+                                task.completed
+                                  ? 'bg-emerald-500 border-emerald-500 text-white'
+                                  : 'border-slate-300 hover:border-emerald-400 bg-white'
+                              }`}
+                            >
+                              {task.completed && <Check className="w-3 h-3 stroke-[3px]" />}
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <span
+                                className={`text-xs sm:text-sm font-bold block truncate ${
+                                  task.completed
+                                    ? 'line-through text-slate-400 font-medium'
+                                    : 'text-slate-800'
+                                }`}
+                              >
+                                {task.title}
+                              </span>
+                            </div>
+
+                            {task.scheduledTime && (
+                              <span className="text-[10px] font-mono font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md shrink-0">
+                                {task.scheduledTime}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Quick actions (visible on hover) */}
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition shrink-0">
+                            <button
+                              onClick={() => {
+                                setEditingTaskId(task.id);
+                                setEditTaskTitle(task.title);
+                                setEditTaskTime(task.scheduledTime || '');
+                                setEditTaskBlock(task.timeBlock || 'Morning');
+                              }}
+                              className="p-1 text-slate-400 hover:text-slate-700"
+                              title="Edit"
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTask(task.id)}
+                              className="p-1 text-slate-400 hover:text-red-500"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -484,9 +598,23 @@ export default function TodayScreen({
           )}
         </div>
 
+        {/* Show More / Show Less Toggle Button (when in All view & > 6 tasks) */}
+        {selectedBlockFilter === 'All' && totalTasksCount > MAX_PREVIEW_TASKS && (
+          <div className="text-center pt-1">
+            <button
+              type="button"
+              onClick={() => setShowAllTasks(prev => !prev)}
+              className="text-xs font-bold text-slate-500 hover:text-slate-900 bg-slate-100/70 hover:bg-slate-100 px-4 py-2 rounded-xl transition cursor-pointer inline-flex items-center gap-1.5"
+            >
+              <span>{showAllTasks ? `Show top focus (${MAX_PREVIEW_TASKS})` : `Show all ${totalTasksCount} tasks`}</span>
+              <span className="text-[10px]">{showAllTasks ? '▴' : '▾'}</span>
+            </button>
+          </div>
+        )}
+
         {/* Add Task Form or Button */}
         {isAddingTask ? (
-          <form onSubmit={handleAddTask} className="p-4 bg-white rounded-2xl border border-slate-200 space-y-3">
+          <form onSubmit={handleAddTask} className="p-4 bg-white rounded-2xl border border-slate-200 space-y-3 mt-2">
             <input
               type="text"
               placeholder="Task name (e.g. Finish assignment)"
@@ -495,13 +623,23 @@ export default function TodayScreen({
               className="w-full px-3.5 py-2 text-xs font-bold border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500"
               autoFocus
             />
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={newTaskBlock}
+                onChange={e => setNewTaskBlock(e.target.value as TimeBlock)}
+                className="px-2.5 py-1.5 text-xs border border-slate-200 rounded-xl bg-white font-bold"
+              >
+                <option value="Morning">☀️ Morning</option>
+                <option value="Afternoon">🌤️ Afternoon</option>
+                <option value="Evening">🌇 Evening</option>
+                <option value="Night">🌙 Night</option>
+              </select>
               <input
                 type="text"
                 placeholder="Time (optional, e.g. 7:00 PM)"
                 value={newTaskTime}
                 onChange={e => setNewTaskTime(e.target.value)}
-                className="px-3 py-1.5 text-xs border border-slate-200 rounded-xl w-44"
+                className="px-3 py-1.5 text-xs border border-slate-200 rounded-xl w-40"
               />
               <div className="flex-1" />
               <button
@@ -515,20 +653,21 @@ export default function TodayScreen({
                 type="submit"
                 className="px-4 py-1.5 text-xs font-black bg-slate-900 text-white rounded-xl hover:bg-slate-800"
               >
-                Add
+                Add Task
               </button>
             </div>
           </form>
         ) : (
           <button
             onClick={() => setIsAddingTask(true)}
-            className="w-full py-3 rounded-2xl border border-dashed border-slate-300 text-xs font-bold text-slate-500 hover:text-slate-900 hover:border-slate-400 transition flex items-center justify-center gap-1.5 cursor-pointer bg-white"
+            className="w-full py-3 rounded-2xl border border-dashed border-slate-300 text-xs font-bold text-slate-500 hover:text-slate-900 hover:border-slate-400 transition flex items-center justify-center gap-1.5 cursor-pointer bg-white mt-2"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add task</span>
           </button>
         )}
       </div>
+
 
       {/* ── UP NEXT ──────────────────────────────────────────────────────── */}
       {upNextTask && (

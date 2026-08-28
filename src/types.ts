@@ -111,3 +111,50 @@ export interface UserStats {
     };
   };
 }
+
+// ─── JOURNAL DOMAIN TYPES ──────────────────────────────────────────────────
+
+export type JournalQuestionType = 'yes_no' | 'rating' | 'number' | 'short_text' | 'long_text';
+
+export interface JournalQuestion {
+  id: string;
+  pillarId: string;
+  text: string;
+  type: JournalQuestionType;
+  unit?: string;
+  enabled: boolean;
+  order: number;
+}
+
+export interface JournalPillar {
+  id: string;
+  name: string;
+  icon?: string;
+  color?: string;
+  order: number;
+  questions: JournalQuestion[];
+}
+
+export interface JournalFinalReflection {
+  learned?: string;
+  created?: string;
+  doBetter?: string;
+  doDifferentlyTomorrow?: string;
+  futureMeThanks?: string;
+  score?: number; // 1 to 10
+  tomorrowPriority?: string;
+}
+
+export interface JournalEntry {
+  id: string;
+  date: string; // YYYY-MM-DD
+  answers: Record<string, any>; // questionId -> answer
+  pillarSnapshot: JournalPillar[]; // questions & pillars snapshot at time of completion
+  finalReflection: JournalFinalReflection;
+  score: number; // 1 to 10
+  tomorrowPriority: string;
+  isCompleted: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+

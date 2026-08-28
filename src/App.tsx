@@ -14,6 +14,9 @@ import {
   Zap,
   Bell,
   Layers as LayersIcon,
+  BookOpen,
+  Sun,
+  Compass,
 } from 'lucide-react';
 import PillarsScreen from './components/PillarsScreen';
 
@@ -25,6 +28,8 @@ import { resetWaterIntakeForDate } from './lib/dietPreferences';
 import HomeScreen from './components/HomeScreen';
 
 const TodayScreen = lazy(() => import('./components/TodayScreen'));
+const SchedulerScreen = lazy(() => import('./components/SchedulerScreen'));
+const JournalScreen = lazy(() => import('./components/JournalScreen'));
 const ProgressScreen = lazy(() => import('./components/ProgressScreen'));
 const ProfileScreen = lazy(() => import('./components/ProfileScreen'));
 const CreateModal = lazy(() => import('./components/CreateModal'));
@@ -748,13 +753,13 @@ export default function App() {
 
   const { score: currentLiveMomentumScore } = calculateMomentum(habits);
 
-  // Nav items — Daily Scheduler prioritized as #1 primary tab
+  // Nav items — Today, Scheduler, Journal, Progress, Profile
   const navItems = [
-    { id: 'today', label: 'Daily Scheduler', icon: CalendarIcon },
-    { id: 'home', label: 'Dashboard', icon: HomeIcon },
-    { id: 'pillars', label: 'Pillars', icon: LayersIcon },
-    { id: 'progress', label: 'Progress Logs', icon: BarChartIcon },
-    { id: 'profile', label: 'Profile Settings', icon: UserIcon },
+    { id: 'today', label: 'Today', icon: Sun },
+    { id: 'scheduler', label: 'Scheduler', icon: CalendarIcon },
+    { id: 'journal', label: 'Journal', icon: BookOpen },
+    { id: 'progress', label: 'Progress', icon: BarChartIcon },
+    { id: 'profile', label: 'Profile', icon: UserIcon },
   ];
 
   return (
@@ -767,8 +772,8 @@ export default function App() {
             <Zap className="w-6 h-6 fill-white animate-pulse" />
           </div>
           <div>
-            <h1 className="text-sm font-black tracking-tight text-white leading-none">90-Day Challenge</h1>
-            <span className="text-[10px] font-bold text-emerald-400 tracking-wider uppercase mt-1 block">LOCK-IN MODE</span>
+            <h1 className="text-sm font-black tracking-tight text-white leading-none">Focus Now</h1>
+            <span className="text-[10px] font-bold text-emerald-400 tracking-wider uppercase mt-1 block">DAILY SYSTEM</span>
           </div>
         </div>
 
@@ -807,56 +812,31 @@ export default function App() {
         <main className="flex-1 overflow-y-auto pb-24 md:pb-8">
           <div className="w-full max-w-6xl mx-auto py-2 md:py-6">
             <Suspense fallback={<SectionFallback />}>
-            {currentTab === 'home' && (
-              <HomeScreen
-                habits={habits}
-                routines={routines}
-                userPoints={userPoints}
+            {(currentTab === 'today' || currentTab === 'home') && (
+              <TodayScreen
                 dateToday={dateToday}
-                onLogHabit={handleLogHabit}
-                onBatchLogHabits={handleBatchLogHabits}
-                setTab={setTab}
-                onNavigateToRoutine={handleNavigateToRoutine}
                 currentUser={currentUser}
-                nutritionToday={nutritionToday}
-                nutritionTargets={nutritionTargets}
-                onUpdateNutritionTargets={handleUpdateNutritionTargets}
-                todaysFoodLog={todaysFoodLog}
-                onRemoveFood={handleRemoveFood}
-                onOpenLogFood={openLogFood}
-                onOpenLogFoodForBlock={openLogFoodForBlock}
-                onOpenCreateModal={() => setIsPlusModalOpen(true)}
-                onRefresh={handleRefreshData}
-                pillarGoals={customGoals}
-                focusedHabitIds={focusedHabitIds}
-                onToggleFocusHabit={handleToggleFocusHabit}
-                onResetDietProgress={handleClearTodayLogs}
+                userPoints={userPoints}
+                onNavigateToTab={setTab}
               />
             )}
 
-            {currentTab === 'today' && (
-              <TodayScreen
-                habits={habits}
-                routines={routines}
-                dateToday={dateToday}
-                onLogHabit={handleLogHabit}
-                onBatchLogHabits={handleBatchLogHabits}
-                userPoints={userPoints}
-                currentUser={currentUser}
-                nutritionToday={nutritionToday}
+            {currentTab === 'scheduler' && (
+              <SchedulerScreen
+                loggedFoods={loggedFoods.length > 0 ? loggedFoods : todaysFoodLog}
                 nutritionTargets={nutritionTargets}
-                todaysFoodLog={todaysFoodLog}
-                loggedFoods={loggedFoods}
                 onUpdateNutritionTargets={handleUpdateNutritionTargets}
                 onOpenLogFoodForBlock={openLogFoodForBlock}
-                onRefresh={handleRefreshData}
-                pillarGoals={customGoals}
-                focusedHabitIds={focusedHabitIds}
-                onToggleFocusHabit={handleToggleFocusHabit}
-                onDeleteHabit={handleDeleteHabit}
-                onEditHabit={handleEditHabit}
-                onDeleteRoutine={handleDeleteRoutine}
-                onEditRoutine={handleEditRoutine}
+                onRemoveFood={handleRemoveFood}
+                userPoints={userPoints}
+                currentUser={currentUser}
+              />
+            )}
+
+            {currentTab === 'journal' && (
+              <JournalScreen
+                currentUser={currentUser}
+                userPoints={userPoints}
               />
             )}
 
@@ -880,6 +860,7 @@ export default function App() {
                 currentUser={currentUser}
               />
             )}
+
             {currentTab === 'profile' && (
               <ProfileScreen
                 currentUser={currentUser}
@@ -896,11 +877,21 @@ export default function App() {
         </main>
 
         {/* Floating Bottom Navigation Bar: Mobile Only */}
-        <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-150 py-2.5 px-4 flex justify-between items-center z-40 shadow-[0_-8px_24px_rgba(0,0,0,0.04)] select-none animate-fade-in">
+        <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-150 py-2.5 px-3 flex justify-between items-center z-40 shadow-[0_-8px_24px_rgba(0,0,0,0.04)] select-none animate-fade-in">
           <button
             onClick={() => setTab('today')}
             className={`flex flex-col items-center justify-center flex-1 py-1 transition cursor-pointer ${
               currentTab === 'today' ? 'text-[#12B886] scale-105' : 'text-gray-400 hover:text-gray-600'
+            }`}
+          >
+            <Sun className="w-5 h-5 stroke-[2.5px]" />
+            <span className="text-[9px] font-black mt-1 uppercase tracking-wider">Today</span>
+          </button>
+
+          <button
+            onClick={() => setTab('scheduler')}
+            className={`flex flex-col items-center justify-center flex-1 py-1 transition cursor-pointer ${
+              currentTab === 'scheduler' ? 'text-[#12B886] scale-105' : 'text-gray-400 hover:text-gray-600'
             }`}
           >
             <CalendarIcon className="w-5 h-5 stroke-[2.5px]" />
@@ -908,33 +899,13 @@ export default function App() {
           </button>
 
           <button
-            onClick={() => setTab('home')}
+            onClick={() => setTab('journal')}
             className={`flex flex-col items-center justify-center flex-1 py-1 transition cursor-pointer ${
-              currentTab === 'home' ? 'text-[#12B886] scale-105' : 'text-gray-400 hover:text-gray-600'
+              currentTab === 'journal' ? 'text-[#12B886] scale-105' : 'text-gray-400 hover:text-gray-600'
             }`}
           >
-            <HomeIcon className="w-5 h-5 stroke-[2.5px]" />
-            <span className="text-[9px] font-black mt-1 uppercase tracking-wider">Dashboard</span>
-          </button>
-
-          {/* Glowing Green Floating "+" Button */}
-          <div className="flex-1 flex justify-center relative -top-3.5">
-            <button
-              onClick={() => setIsPlusModalOpen(true)}
-              className="bg-[#12B886] hover:bg-[#12B886]/90 text-white p-3.5 rounded-full shadow-lg shadow-emerald-500/30 hover:scale-110 active:scale-95 transition-all duration-300 cursor-pointer border border-emerald-400"
-            >
-              <PlusIcon className="w-6 h-6 stroke-[3px]" />
-            </button>
-          </div>
-
-          <button
-            onClick={() => setTab('pillars')}
-            className={`flex flex-col items-center justify-center flex-1 py-1 transition cursor-pointer ${
-              currentTab === 'pillars' ? 'text-[#12B886] scale-105' : 'text-gray-400 hover:text-gray-600'
-            }`}
-          >
-            <LayersIcon className="w-5 h-5 stroke-[2.5px]" />
-            <span className="text-[9px] font-black mt-1 uppercase tracking-wider">Pillars</span>
+            <BookOpen className="w-5 h-5 stroke-[2.5px]" />
+            <span className="text-[9px] font-black mt-1 uppercase tracking-wider">Journal</span>
           </button>
 
           <button
@@ -957,6 +928,7 @@ export default function App() {
             <span className="text-[9px] font-black mt-1 uppercase tracking-wider">Profile</span>
           </button>
         </div>
+
 
       </div>
 

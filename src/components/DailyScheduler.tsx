@@ -28,10 +28,13 @@ import {
   ClipboardList,
   MoreVertical,
   Target,
+  ArrowRight,
+  FastForward,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { formatDateString, dateToday } from '../data';
 import type { NutritionTargets } from '../types';
+import { getDailyPriority } from '../lib/journal';
 import {
   getBlockProteinGoal,
   BLOCK_PROTEIN_KEYS,
@@ -1453,6 +1456,19 @@ export default function DailyScheduler({
       }
     });
   };
+
+  // Quick bump task to the next time block
+  const handleBumpToNextBlock = (taskId: string) => {
+    setTasks(prev => {
+      const target = prev.find(t => t.id === taskId);
+      if (!target) return prev;
+      const ci = TIME_BLOCK_LIST.indexOf(target.timeBlock);
+      const nextBlock = TIME_BLOCK_LIST[(ci + 1) % TIME_BLOCK_LIST.length];
+      showToast(`⏩ Moved to ${nextBlock}`);
+      return prev.map(t => t.id === taskId ? { ...t, timeBlock: nextBlock } : t);
+    });
+  };
+
 
   // Move subtask
   const handleMoveSubtask = (taskId: string, subtaskId: string, direction: 'up' | 'down') => {
@@ -4101,13 +4117,16 @@ export default function DailyScheduler({
                                       </button>
                                     )}
 
-                                    {/* Arrow reorder buttons */}
-                                    <div className="opacity-80 sm:opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-0 bg-neutral-100/80 border border-neutral-200/80 rounded-lg p-0.5 shrink-0">
+                                    {/* Arrow reorder & Bump buttons */}
+                                    <div className="opacity-80 sm:opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-0.5 bg-neutral-100/80 border border-neutral-200/80 rounded-lg p-0.5 shrink-0">
                                       <button type="button" onClick={() => handleMoveTask(task.id, 'up')} className="text-neutral-500 hover:text-black active:scale-90 active:bg-neutral-200 p-0.5 rounded-md hover:bg-neutral-200 transition-all cursor-pointer touch-manipulation" title="Move up">
                                         <ChevronUp className="w-3.5 h-3.5" />
                                       </button>
                                       <button type="button" onClick={() => handleMoveTask(task.id, 'down')} className="text-neutral-500 hover:text-black active:scale-90 active:bg-neutral-200 p-0.5 rounded-md hover:bg-neutral-200 transition-all cursor-pointer touch-manipulation" title="Move down">
                                         <ChevronDown className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button type="button" onClick={() => handleBumpToNextBlock(task.id)} className="text-neutral-400 hover:text-black active:scale-90 p-0.5 rounded-md hover:bg-neutral-200 transition-all cursor-pointer touch-manipulation" title="Bump to next time block">
+                                        <FastForward className="w-3.5 h-3.5" />
                                       </button>
                                     </div>
 

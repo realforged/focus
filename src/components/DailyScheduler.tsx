@@ -39,6 +39,11 @@ import {
   normalizeMealTypeToBlock,
 } from '../lib/nutritionBlocks';
 import ProteinBlockBar from './ProteinBlockBar';
+import {
+  type FavoriteProteinItem,
+  getStoredFavoriteProteins,
+  saveStoredFavoriteProteins,
+} from '../lib/favoriteProteins';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -114,15 +119,6 @@ const LOCAL_NUTRITION_TARGETS_KEY = 'focus_now_scheduler_protein_targets_v1';
 const APP_NUTRITION_TARGETS_KEY = '90day_nutrition_targets';
 const APP_LOGGED_FOODS_KEY = '90day_logged_foods';
 const FAVORITE_PROTEINS_KEY = 'focus_now_favorite_proteins_v1';
-
-interface FavoriteProteinItem {
-  id: string;
-  name: string;
-  protein: number;
-  emoji?: string;
-}
-
-const DEFAULT_FAVORITE_PROTEINS: FavoriteProteinItem[] = [];
 const NOTIF_BANNER_KEY   = 'focus_now_notif_banner_dismissed';
 const DAILY_NOTES_KEY    = 'focus_now_daily_notes_v2';
 
@@ -442,14 +438,9 @@ export default function DailyScheduler({
   });
   const [showInlineProteinLog, setShowInlineProteinLog] = useState(false);
   const [inlineProteinEntry, setInlineProteinEntry] = useState({ name: '', protein: '', mealType: 'Morning' as 'Morning' | 'Afternoon' | 'Evening' | 'Night' });
-  const [favoriteProteins, setFavoriteProteins] = useState<FavoriteProteinItem[]>(() => {
-    try {
-      const raw = localStorage.getItem(FAVORITE_PROTEINS_KEY);
-      return raw ? JSON.parse(raw) : DEFAULT_FAVORITE_PROTEINS;
-    } catch {
-      return DEFAULT_FAVORITE_PROTEINS;
-    }
-  });
+  const [favoriteProteins, setFavoriteProteins] = useState<FavoriteProteinItem[]>(() => getStoredFavoriteProteins());
+  const [showAddFavoriteProteinModal, setShowAddFavoriteProteinModal] = useState(false);
+  const [customFavDraft, setCustomFavDraft] = useState({ name: '', protein: '25', emoji: '🥩' });
   const [sleepLogs, setSleepLogs] = useState<Record<string, { hours: number; quality: number; goal: number }>>(() => {
     try {
       const saved = localStorage.getItem('focus_now_scheduler_sleep_logs_v1');
@@ -614,6 +605,23 @@ export default function DailyScheduler({
       localStorage.setItem(STANDARD_TASK_TEMPLATES_KEY, JSON.stringify(standardTaskTemplates));
     } catch {}
   }, [standardTaskTemplates]);
+
+  // Sync favorite proteins across components and tabs
+  useEffect(() => {
+    const handleSync = (e: any) => {
+      if (e.detail) {
+        setFavoriteProteins(e.detail);
+      } else {
+        setFavoriteProteins(getStoredFavoriteProteins());
+      }
+    };
+    window.addEventListener('focus_now_favorites_updated', handleSync as EventListener);
+    window.addEventListener('storage', handleSync);
+    return () => {
+      window.removeEventListener('focus_now_favorites_updated', handleSync as EventListener);
+      window.removeEventListener('storage', handleSync);
+    };
+  }, []);
 
   // Sync planning notes completion & deletion with main tasks
   useEffect(() => {
@@ -1048,9 +1056,9 @@ export default function DailyScheduler({
     showToast(`Quick logged ${item.name} (${item.protein}g) to ${mealType}!`);
   };
 
-  const handleAddFavoriteProtein = () => {
-    const name = inlineProteinEntry.name.trim();
-    const protein = Number.parseFloat(inlineProteinEntry.protein);
+  const handleAddFavoriteProtein = (customItem?: { name: string; protein: number; emoji?: string }) => {
+    const name = (customItem ? customItem.name : inlineProteinEntry.name).trim();
+    const protein = customItem ? customItem.protein : Number.parseFloat(inlineProteinEntry.protein);
     if (!name || !Number.isFinite(protein) || protein <= 0) {
       showToast('Enter food name & protein grams to save as favorite');
       return;
@@ -1059,22 +1067,19 @@ export default function DailyScheduler({
       id: 'fav_' + Math.random().toString(36).substring(2, 9),
       name,
       protein: Math.round(protein * 10) / 10,
-      emoji: '⭐',
+      emoji: customItem?.emoji || '⭐',
     };
-    const updated = [...favoriteProteins, newItem];
+    const updated = [newItem, ...favoriteProteins.filter(f => f.name.toLowerCase() !== name.toLowerCase())];
     setFavoriteProteins(updated);
-    try {
-      localStorage.setItem(FAVORITE_PROTEINS_KEY, JSON.stringify(updated));
-    } catch {}
-    showToast(`Saved "${name}" to favorite protein logs!`);
+    saveStoredFavoriteProteins(updated);
+    showToast(`Saved "${name}" (${newItem.protein}g) to Favorites! ⭐`);
+    setShowAddFavoriteProteinModal(false);
   };
 
   const handleRemoveFavoriteProtein = (id: string, name: string) => {
     const updated = favoriteProteins.filter(f => f.id !== id);
     setFavoriteProteins(updated);
-    try {
-      localStorage.setItem(FAVORITE_PROTEINS_KEY, JSON.stringify(updated));
-    } catch {}
+    saveStoredFavoriteProteins(updated);
     showToast(`Removed "${name}" from favorites`);
   };
 
@@ -2938,39 +2943,141 @@ export default function DailyScheduler({
                       </div>
 
                       {/* ⭐ Quick Favourites Section */}
-                      <div className="space-y-1.5 bg-neutral-50 p-2.5 rounded-xl border border-neutral-200">
-                        <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-neutral-500">
-                          <span>⭐ Quick Favorites (1-Tap Log to {inlineProteinEntry.mealType}):</span>
-                        </div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          {favoriteProteins.map(fav => (
-                            <div
-                              key={fav.id}
-                              className="group relative inline-flex items-center"
+                      <div className="space-y-2 bg-neutral-50/80 p-3 rounded-2xl border border-neutral-200">
+                        <div className="flex items-center justify-between gap-2 flex-wrap text-[10px] font-black uppercase tracking-wider text-neutral-500">
+                          <span className="flex items-center gap-1">
+                            <Star className="w-3 h-3 fill-amber-400 text-amber-400 inline" />
+                            Quick Favorites (1-Tap Log to <strong className="text-black">{inlineProteinEntry.mealType}</strong>):
+                          </span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setShowAddFavoriteProteinModal(prev => !prev)}
+                              className="h-6 px-2.5 rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-900 text-[10px] font-black transition cursor-pointer flex items-center gap-1 active:scale-95 shadow-2xs"
+                              title="Add a new custom favorite protein item"
                             >
+                              <Plus className="w-3 h-3 text-amber-800 stroke-[3]" />
+                              <span>+ Add Favorite</span>
+                            </button>
+                            {onOpenLogFoodForBlock && (
                               <button
                                 type="button"
-                                onClick={() => handleQuickLogFavoriteProtein(fav)}
-                                className="h-7 px-2.5 rounded-lg border border-neutral-200 bg-white hover:border-black hover:bg-neutral-900 hover:text-white text-[10px] font-black text-black transition-all cursor-pointer flex items-center gap-1 active:scale-95 shadow-2xs"
-                                title={`1-Tap log ${fav.name} (${fav.protein}g) to ${inlineProteinEntry.mealType}`}
+                                onClick={() => onOpenLogFoodForBlock(inlineProteinEntry.mealType)}
+                                className="h-6 px-2 rounded-lg bg-white border border-neutral-200 hover:border-black text-[10px] font-black text-black transition cursor-pointer"
+                                title="Open full protein database modal"
                               >
-                                <span>{fav.emoji || '🥩'}</span>
-                                <span>{fav.name}</span>
-                                <span className="text-[9px] opacity-75 font-bold">({fav.protein}g)</span>
+                                View All ↗
                               </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Add Favorite Inline Modal/Drawer */}
+                        {showAddFavoriteProteinModal && (
+                          <form
+                            onSubmit={(e) => {
+                              e.preventDefault();
+                              const proteinVal = parseFloat(customFavDraft.protein);
+                              if (!customFavDraft.name.trim() || !proteinVal) return;
+                              handleAddFavoriteProtein({
+                                name: customFavDraft.name.trim(),
+                                protein: proteinVal,
+                                emoji: customFavDraft.emoji || '⭐',
+                              });
+                              setCustomFavDraft({ name: '', protein: '25', emoji: '🥩' });
+                            }}
+                            className="bg-white p-3 rounded-xl border border-amber-300 shadow-sm space-y-2.5 animate-in fade-in zoom-in-95 duration-150"
+                          >
+                            <div className="flex items-center justify-between text-xs font-black text-amber-900">
+                              <span className="flex items-center gap-1">⭐ Add Favorite Protein</span>
                               <button
                                 type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRemoveFavoriteProtein(fav.id, fav.name);
-                                }}
-                                className="ml-1 w-4 h-4 rounded-full bg-neutral-200 hover:bg-red-500 hover:text-white text-neutral-500 text-[9px] font-black flex items-center justify-center cursor-pointer transition shrink-0"
-                                title="Remove favorite"
+                                onClick={() => setShowAddFavoriteProteinModal(false)}
+                                className="text-neutral-400 hover:text-black font-bold text-xs cursor-pointer"
                               >
                                 ✕
                               </button>
                             </div>
-                          ))}
+
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <input
+                                type="text"
+                                placeholder="Food name (e.g. 4 Boiled Eggs, Salmon)"
+                                value={customFavDraft.name}
+                                onChange={(e) => setCustomFavDraft(prev => ({ ...prev, name: e.target.value }))}
+                                className="flex-1 min-w-36 h-8 rounded-lg border border-neutral-300 px-2.5 text-xs font-semibold focus:outline-none focus:border-black"
+                                required
+                                autoFocus
+                              />
+                              <input
+                                type="number"
+                                placeholder="Protein (g)"
+                                min="1"
+                                step="0.5"
+                                value={customFavDraft.protein}
+                                onChange={(e) => setCustomFavDraft(prev => ({ ...prev, protein: e.target.value }))}
+                                className="w-20 h-8 rounded-lg border border-neutral-300 px-2 text-xs font-bold text-center focus:outline-none focus:border-black"
+                                required
+                              />
+                              <div className="flex items-center gap-1">
+                                {['🥩', '🍗', '🥚', '🥤', '🥣', '🧀', '🐟', '🌱'].map(em => (
+                                  <button
+                                    key={em}
+                                    type="button"
+                                    onClick={() => setCustomFavDraft(prev => ({ ...prev, emoji: em }))}
+                                    className={`w-6 h-6 rounded text-xs flex items-center justify-center transition cursor-pointer ${
+                                      customFavDraft.emoji === em ? 'bg-amber-200 ring-2 ring-amber-400 scale-110' : 'hover:bg-neutral-100'
+                                    }`}
+                                  >
+                                    {em}
+                                  </button>
+                                ))}
+                              </div>
+                              <button
+                                type="submit"
+                                className="h-8 px-3 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-black transition cursor-pointer flex items-center gap-1 shadow-xs"
+                              >
+                                <Star className="w-3.5 h-3.5 fill-white" />
+                                Save
+                              </button>
+                            </div>
+                          </form>
+                        )}
+
+                        {/* Favorite Protein Chips */}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {favoriteProteins.length === 0 ? (
+                            <p className="text-[11px] text-neutral-400 py-1">No favorite proteins yet. Click "+ Add Favorite" above!</p>
+                          ) : (
+                            favoriteProteins.map(fav => (
+                              <div
+                                key={fav.id}
+                                className="group relative inline-flex items-center"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuickLogFavoriteProtein(fav)}
+                                  className="h-7 px-2.5 rounded-lg border border-neutral-200 bg-white hover:border-black hover:bg-black hover:text-white text-[10px] font-black text-black transition-all cursor-pointer flex items-center gap-1 active:scale-95 shadow-2xs"
+                                  title={`1-Tap log ${fav.name} (${fav.protein}g) to ${inlineProteinEntry.mealType}`}
+                                >
+                                  <span>{fav.emoji || '🥩'}</span>
+                                  <span>{fav.name}</span>
+                                  <span className="text-[9px] opacity-75 font-bold">({fav.protein}g)</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleRemoveFavoriteProtein(fav.id, fav.name);
+                                  }}
+                                  className="ml-1 w-4 h-4 rounded-full bg-neutral-200 hover:bg-red-500 hover:text-white text-neutral-500 text-[9px] font-black flex items-center justify-center cursor-pointer transition shrink-0 opacity-40 hover:opacity-100"
+                                  title="Remove favorite"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ))
+                          )}
                         </div>
                       </div>
 
@@ -2995,10 +3102,11 @@ export default function DailyScheduler({
                         />
                         <button
                           type="button"
-                          onClick={handleAddFavoriteProtein}
+                          onClick={() => handleAddFavoriteProtein()}
                           className="h-8 px-2.5 rounded-xl border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 text-[10px] font-black transition cursor-pointer flex items-center gap-1"
                           title="Save typed food & grams to Quick Favorites"
                         >
+                          <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
                           ⭐ Save Fav
                         </button>
                         <button

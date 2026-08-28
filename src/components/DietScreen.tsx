@@ -24,6 +24,11 @@ import {
   getWaterIntakeForDate,
   addWaterIntakeForDate,
 } from '../lib/dietPreferences';
+import {
+  type FavoriteProteinItem,
+  getStoredFavoriteProteins,
+  saveStoredFavoriteProteins,
+} from '../lib/favoriteProteins';
 
 export interface LoggedFood {
   id: string;
@@ -119,18 +124,23 @@ export default function DietScreen({
   };
 
   // Favorites state
-  const [favorites, setFavorites] = useState<FavoriteFoodItem[]>(() => {
-    try {
-      const saved = localStorage.getItem('90day_favorite_foods');
-      return saved ? JSON.parse(saved) : [
-        { id: 'fav-1', name: 'Protein Shake & Oats', protein: 35, carbs: 45, fats: 6, fiber: 5, calories: 375, emoji: '🥤' },
-        { id: 'fav-2', name: 'Grilled Chicken & Rice', protein: 42, carbs: 50, fats: 8, fiber: 3, calories: 440, emoji: '🍗' },
-        { id: 'fav-3', name: 'Greek Yogurt & Berries', protein: 20, carbs: 22, fats: 2, fiber: 4, calories: 185, emoji: '🫐' }
-      ];
-    } catch (e) {
-      return [];
-    }
-  });
+  const [favorites, setFavorites] = useState<FavoriteFoodItem[]>(() => getStoredFavoriteProteins() as FavoriteFoodItem[]);
+
+  useEffect(() => {
+    const handleSync = (e: any) => {
+      if (e.detail) {
+        setFavorites(e.detail);
+      } else {
+        setFavorites(getStoredFavoriteProteins() as FavoriteFoodItem[]);
+      }
+    };
+    window.addEventListener('focus_now_favorites_updated', handleSync as EventListener);
+    window.addEventListener('storage', handleSync);
+    return () => {
+      window.removeEventListener('focus_now_favorites_updated', handleSync as EventListener);
+      window.removeEventListener('storage', handleSync);
+    };
+  }, []);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -210,13 +220,13 @@ export default function DietScreen({
 
     if (saveAsFav) {
       const newFav: FavoriteFoodItem = {
-        id: Math.random().toString(36).substring(2, 9),
+        id: 'fav_' + Math.random().toString(36).substring(2, 9),
         ...item,
         emoji: '⭐'
       };
-      const updatedFavs = [newFav, ...favorites];
+      const updatedFavs = [newFav, ...favorites.filter(f => f.name.toLowerCase() !== item.name.toLowerCase())];
       setFavorites(updatedFavs);
-      localStorage.setItem('90day_favorite_foods', JSON.stringify(updatedFavs));
+      saveStoredFavoriteProteins(updatedFavs as any);
     }
 
     setCustomName('');
@@ -239,7 +249,7 @@ export default function DietScreen({
     e.stopPropagation();
     const updated = favorites.filter(f => f.id !== id);
     setFavorites(updated);
-    localStorage.setItem('90day_favorite_foods', JSON.stringify(updated));
+    saveStoredFavoriteProteins(updated as any);
     showToast('Removed from favorites.');
   };
 
